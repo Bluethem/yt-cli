@@ -44,7 +44,7 @@ cargo run -- <comando> [args]
 ytcli search "lofi hip hop" -n 5
 ```
 
-Muestra resultados numerados (1-based). Los guarda en `~/.cache/ytcli/state.json` para `play N`.
+Muestra resultados numerados (1-based). Los guarda en `~/.cache/ytcli/state.json` para `play N` y `add N`.
 
 ### Reproducir
 
@@ -60,7 +60,38 @@ Por consulta directa (reproduce el primer resultado):
 ytcli play "lofi hip hop"
 ```
 
-**Nota MVP:** solo hay **un** proceso mpv. Cada `play` **reemplaza** la pista actual; no hay cola ni historial de reproducción.
+`play` **reemplaza** la cola completa con la pista elegida, la reproduce y arranca el auto-avance (ver más abajo).
+
+### Cola de reproducción
+
+| Comando | Descripción |
+|---------|-------------|
+| `add <target>` | Encola una pista sin interrumpir la actual. Mismo formato de `<target>` que `play` (índice del último `search` o consulta). |
+| `queue` / `list` | Lista la cola; marca con `>` la pista actual. |
+| `next` | Pasa a la siguiente pista (resuelve URL al vuelo). Error si ya estás en la última. |
+| `prev` | Si llevas más de 3 s en la pista → vuelve al inicio; si no → pista anterior. |
+| `prev -f` / `prev --force` | Siempre salta a la pista anterior (sin reiniciar la actual). |
+| `clear` | Elimina las pistas pendientes; la cola queda solo con la actual. **No** detiene la reproducción. |
+
+Ejemplo:
+
+```bash
+ytcli search "lofi" -n 5
+ytcli play 1
+ytcli add 2
+ytcli add 3
+ytcli queue
+ytcli next
+ytcli prev
+ytcli prev -f
+ytcli clear
+```
+
+### Auto-avance
+
+Al reproducir (`play`, `next`, etc.), ytcli lanza en segundo plano un proceso interno **`watch`** que observa mpv vía IPC. Cuando termina la pista actual, avanza automáticamente a la siguiente. Al llegar al final de la cola, hace un **stop limpio** (sin repetir ni dar la vuelta).
+
+`ytcli watch` existe como comando interno/avanzado; no hace falta invocarlo a mano en el flujo normal.
 
 ### Control de reproducción
 
@@ -68,22 +99,34 @@ ytcli play "lofi hip hop"
 ytcli pause
 ytcli resume
 ytcli volume 50    # 0–100
-ytcli stop
+ytcli stop         # para mpv, vacía la cola y detiene watch
 ```
 
 ### Estado
 
 ```bash
-ytcli now      # pista actual
-ytcli status   # ¿mpv activo?
+ytcli now
+ytcli status
 ```
+
+Ambos muestran la pista actual con posición en cola y progreso temporal:
+
+```text
+▶ [2/5] Título — Artista  1:23 / 3:45
+```
+
+Formato: `[i/n]` (índice actual / total en cola), luego título, artista y `posición / duración` (`m:ss`, o `h:mm:ss` si la pista dura ≥ 1 h). Si no hay reproducción activa, indican que no hay nada sonando.
 
 ## Ejemplo de flujo
 
 ```bash
 ytcli search "jazz piano" -n 5
 ytcli play 2
-ytcli now
+ytcli add 3
+ytcli add 4
+ytcli queue
+ytcli status
+ytcli next
 ytcli pause
 ytcli resume
 ytcli volume 40
@@ -92,16 +135,33 @@ ytcli stop
 
 ## Datos locales
 
-- Estado: `~/.cache/ytcli/state.json` (última búsqueda, pista actual, PID de mpv)
+- Estado: `~/.cache/ytcli/state.json` (última búsqueda, cola, índice actual, pista en reproducción, PID de mpv y de watch)
 - Socket IPC: `~/.cache/ytcli/mpv.sock`
 
 ## Desarrollo
 
 ```bash
 cargo test
+cargo clippy --all-targets -- -D warnings
 ```
 
 Los tests unitarios no requieren `mpv` ni red; usan fixtures y mocks donde aplica.
+
+### Checklist manual (smoke, requiere mpv + yt-dlp)
+
+```bash
+cargo run -- search "lofi" -n 5
+cargo run -- play 1
+cargo run -- add 2
+cargo run -- add 3
+cargo run -- queue
+cargo run -- status
+cargo run -- next
+cargo run -- prev
+cargo run -- prev -f
+cargo run -- clear
+cargo run -- stop
+```
 
 ## Licencia
 
