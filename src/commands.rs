@@ -103,9 +103,9 @@ fn cmd_prev(force: bool) -> Result<()> {
         PrevAction::GoTo(index) => {
             load_queue_index_at_socket(&mut state, index, &socket)?;
             state.save()?;
-            crate::watch::ensure_running(&mut state)?;
         }
     }
+    crate::watch::ensure_running(&mut state)?;
     Ok(())
 }
 

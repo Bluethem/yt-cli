@@ -3,6 +3,7 @@ use crate::queue;
 use crate::state::{AppState, Track};
 use crate::youtube::YtDlp;
 use crate::Result;
+use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -56,8 +57,12 @@ pub fn advance_after_eof(state: &mut AppState) -> Result<AdvanceOutcome> {
 }
 
 pub fn ensure_running(state: &mut AppState) -> Result<()> {
-    if state.watch_pid.is_some_and(process_is_alive) {
-        return Ok(());
+    if let Some(pid) = state.watch_pid {
+        if process_is_watch(pid) {
+            return Ok(());
+        }
+        state.watch_pid = None;
+        state.save()?;
     }
 
     let executable = match std::env::current_exe() {
@@ -89,7 +94,9 @@ pub fn ensure_running(state: &mut AppState) -> Result<()> {
 
 pub fn kill_watch(state: &mut AppState) -> Result<()> {
     if let Some(pid) = state.watch_pid.take() {
-        let _ = Command::new("kill").arg(pid.to_string()).status();
+        if process_is_watch(pid) {
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
     }
     Ok(())
 }
@@ -99,7 +106,7 @@ pub fn run_watch_loop() -> Result<()> {
     let mut initial_state = AppState::load()?;
     if initial_state
         .watch_pid
-        .is_some_and(|pid| pid != own_pid && process_is_alive(pid))
+        .is_some_and(|pid| pid != own_pid && process_is_watch(pid))
     {
         return Ok(());
     }
@@ -135,7 +142,7 @@ pub fn run_watch_loop() -> Result<()> {
         }
 
         match player::get_property_bool(&socket, "idle-active") {
-            Ok(true) if had_playback => {
+            Ok(idle_or_eof) if should_trigger_advance(had_playback, idle_or_eof) => {
                 let outcome = match advance_after_eof(&mut state) {
                     Ok(outcome) => outcome,
                     Err(error) => {
@@ -164,8 +171,31 @@ pub fn run_watch_loop() -> Result<()> {
     }
 }
 
-fn process_is_alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+fn should_trigger_advance(had_playback: bool, idle_or_eof: bool) -> bool {
+    had_playback && idle_or_eof
+}
+
+fn process_is_watch(pid: u32) -> bool {
+    let proc_dir = Path::new("/proc").join(pid.to_string());
+    let Ok(current_exe) = std::env::current_exe() else {
+        return false;
+    };
+    let Ok(process_exe) = fs::read_link(proc_dir.join("exe")) else {
+        return false;
+    };
+    let Ok(cmdline) = fs::read(proc_dir.join("cmdline")) else {
+        return false;
+    };
+
+    matches_watch_process(&current_exe, &process_exe, &cmdline)
+}
+
+fn matches_watch_process(current_exe: &Path, process_exe: &Path, cmdline: &[u8]) -> bool {
+    current_exe == process_exe
+        && cmdline
+            .split(|byte| *byte == 0)
+            .skip(1)
+            .any(|argument| argument == b"watch")
 }
 
 fn clear_own_pid(state: &mut AppState) -> Result<()> {
@@ -181,6 +211,7 @@ fn clear_own_pid(state: &mut AppState) -> Result<()> {
 mod tests {
     use super::*;
     use crate::state::Track;
+    use std::process::{Command, Stdio};
 
     fn track(id: &str) -> Track {
         Track {
@@ -252,5 +283,59 @@ mod tests {
         assert!(state.mpv_pid.is_none());
         assert!(state.ipc_socket.is_none());
         assert!(state.watch_pid.is_none());
+    }
+
+    #[test]
+    fn watch_process_identity_requires_matching_executable_and_watch_argument() {
+        let executable = Path::new("/usr/bin/ytcli");
+
+        assert!(matches_watch_process(
+            executable,
+            executable,
+            b"/usr/bin/ytcli\0watch\0"
+        ));
+        assert!(!matches_watch_process(
+            executable,
+            Path::new("/usr/bin/other"),
+            b"/usr/bin/ytcli\0watch\0"
+        ));
+        assert!(!matches_watch_process(
+            executable,
+            executable,
+            b"/usr/bin/ytcli\0status\0"
+        ));
+    }
+
+    #[test]
+    fn kill_watch_clears_mismatched_pid_without_killing_process() {
+        let mut child = Command::new("sleep")
+            .arg("10")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut state = AppState {
+            watch_pid: Some(child.id()),
+            ..Default::default()
+        };
+
+        kill_watch(&mut state).unwrap();
+
+        let still_running = child.try_wait().unwrap().is_none();
+        if still_running {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        assert!(still_running);
+        assert!(state.watch_pid.is_none());
+    }
+
+    #[test]
+    fn trigger_advance_requires_prior_playback_and_idle_or_eof() {
+        assert!(should_trigger_advance(true, true));
+        assert!(!should_trigger_advance(false, true));
+        assert!(!should_trigger_advance(true, false));
+        assert!(!should_trigger_advance(false, false));
     }
 }
