@@ -85,6 +85,7 @@ fn cmd_next() -> Result<()> {
     let next = queue::try_next_index(&state)?;
     load_queue_index(&mut state, next)?;
     state.save()?;
+    crate::watch::ensure_running(&mut state)?;
     Ok(())
 }
 
@@ -102,6 +103,7 @@ fn cmd_prev(force: bool) -> Result<()> {
         PrevAction::GoTo(index) => {
             load_queue_index_at_socket(&mut state, index, &socket)?;
             state.save()?;
+            crate::watch::ensure_running(&mut state)?;
         }
     }
     Ok(())
@@ -116,7 +118,7 @@ fn cmd_clear() -> Result<()> {
 }
 
 fn cmd_watch() -> Result<()> {
-    Ok(())
+    crate::watch::run_watch_loop()
 }
 
 fn cmd_play(target: &str) -> Result<()> {

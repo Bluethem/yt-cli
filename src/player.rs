@@ -114,6 +114,11 @@ pub fn get_property_f64(socket: &Path, name: &str) -> Result<f64> {
     data_as_f64(socket, &response)
 }
 
+pub fn get_property_bool(socket: &Path, name: &str) -> Result<bool> {
+    let response = send_ipc_json(socket, &json!({ "command": ["get_property", name] }))?;
+    data_as_bool(socket, &response)
+}
+
 pub fn time_pos(socket: &Path) -> Result<f64> {
     get_property_f64(socket, "time-pos")
 }
@@ -234,6 +239,17 @@ fn data_as_f64(socket: &Path, value: &Value) -> Result<f64> {
         })
 }
 
+fn data_as_bool(socket: &Path, value: &Value) -> Result<bool> {
+    let data = value.get("data").ok_or_else(|| YtcliError::MpvIpc {
+        path: socket.to_path_buf(),
+        detail: "respuesta IPC sin campo data".into(),
+    })?;
+    data.as_bool().ok_or_else(|| YtcliError::MpvIpc {
+        path: socket.to_path_buf(),
+        detail: format!("data no booleana: {data}"),
+    })
+}
+
 fn ipc_error(socket: &Path, error: impl std::fmt::Display) -> YtcliError {
     YtcliError::MpvIpc {
         path: socket.to_path_buf(),
@@ -332,6 +348,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(data_as_f64(socket, &response).unwrap(), 3661.0);
+    }
+
+    #[test]
+    fn get_property_response_parses_boolean_data() {
+        let socket = Path::new("/tmp/mpv.sock");
+        let response = ipc_response_value(socket, r#"{"data":true,"error":"success"}"#).unwrap();
+
+        assert!(data_as_bool(socket, &response).unwrap());
     }
 
     #[test]
