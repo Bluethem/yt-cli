@@ -154,7 +154,6 @@ mod tests {
             last_search: vec![track("x", "t")],
             queue: vec![track("a", "A")],
             current_index: Some(0),
-            ..Default::default()
         };
         s.clear_playback();
         assert!(s.mpv_pid.is_none());
