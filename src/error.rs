@@ -38,6 +38,14 @@ pub enum YtcliError {
     #[error("no se pudo escribir el estado en {path}: {detail}")]
     StateIo { path: PathBuf, detail: String },
 
+    #[error("falló Spotify: {0}")]
+    Spotify(String),
+
+    #[error(
+        "faltan credenciales de Spotify; exporta SPOTIFY_CLIENT_ID y SPOTIFY_CLIENT_SECRET (app en https://developer.spotify.com/dashboard)"
+    )]
+    MissingSpotifyCredentials,
+
     #[error("JSON inválido: {0}")]
     Json(String),
 
@@ -141,6 +149,18 @@ mod tests {
     fn json_display() {
         let err = YtcliError::Json("unexpected EOF".into());
         assert_eq!(err.to_string(), "JSON inválido: unexpected EOF");
+    }
+
+    #[test]
+    fn spotify_display() {
+        let err = YtcliError::Spotify("boom".into());
+        assert_eq!(err.to_string(), "falló Spotify: boom");
+    }
+
+    #[test]
+    fn missing_spotify_credentials_display() {
+        let err = YtcliError::MissingSpotifyCredentials;
+        assert!(err.to_string().contains("SPOTIFY_CLIENT_ID"));
     }
 
     #[test]

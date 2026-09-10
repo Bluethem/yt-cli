@@ -148,7 +148,12 @@ fn cmd_shuffle() -> Result<()> {
 fn cmd_playlist(url: &str, play: bool, limit: usize) -> Result<()> {
     let yt_dlp = YtDlp::default();
     yt_dlp.ensure_bin()?;
-    let (title, tracks) = yt_dlp.fetch_playlist(url, limit)?;
+
+    let (title, tracks) = if crate::spotify::is_spotify_url(url) {
+        crate::spotify::expand_to_tracks(url, limit)?
+    } else {
+        yt_dlp.fetch_playlist(url, limit)?
+    };
     let label = title.unwrap_or_else(|| "playlist".into());
 
     if play {

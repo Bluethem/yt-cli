@@ -74,11 +74,18 @@ ytcli play "lofi hip hop"
 | `clear` | Elimina las pistas pendientes; la cola queda solo con la actual. **No** detiene la reproducción. |
 | `shuffle` | Mezcla solo las pistas **pendientes** (después de la actual). La que suena no cambia. |
 
-### Playlist de YouTube
+### Playlist de YouTube o Spotify
 
 ```bash
-# Encola hasta 100 pistas (por defecto) sin interrumpir
+# YouTube: encola hasta 100 pistas (por defecto) sin interrumpir
 ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx"
+
+# Spotify (playlist / álbum / track públicos): metadatos vía API → mirror YouTube
+export SPOTIFY_CLIENT_ID=…
+export SPOTIFY_CLIENT_SECRET=…
+ytcli playlist "https://open.spotify.com/playlist/…"
+ytcli playlist "https://open.spotify.com/album/…" --play
+ytcli playlist "spotify:track:…" -n 1
 
 # Reemplaza la cola y reproduce desde el primero
 ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" --play
@@ -87,6 +94,7 @@ ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" --play
 ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" -n 30
 ```
 
+Spotify **no se stream‑ea**: se usa la API (Client Credentials) para título/artista y se busca el audio en YouTube (`ytsearch1`). Crea una app en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) y exporta las variables de entorno.
 ### Loop de la pista actual
 
 ```bash
