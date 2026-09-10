@@ -46,6 +46,27 @@ pub enum Commands {
     },
     /// Deja en cola solo la pista actual
     Clear,
+    /// Mezcla solo las pistas pendientes (después de la actual)
+    Shuffle,
+    /// Importa una playlist de YouTube
+    Playlist {
+        url: String,
+        /// Reemplaza la cola y reproduce desde el primero
+        #[arg(long)]
+        play: bool,
+        /// Máximo de pistas a importar
+        #[arg(
+            short = 'n',
+            long,
+            default_value_t = 100,
+            value_parser = parse_search_limit
+        )]
+        limit: usize,
+    },
+    /// Repite la pista actual
+    Loop,
+    /// Quita el loop de la pista actual
+    Unloop,
     /// Bucle interno de auto-avance (avanzado)
     Watch,
     Pause,
@@ -139,5 +160,42 @@ mod tests {
     fn parse_list_alias() {
         let cli = Cli::try_parse_from(["ytcli", "list"]).unwrap();
         assert!(matches!(cli.command, Commands::Queue));
+    }
+
+    #[test]
+    fn parse_playlist_play_and_limit() {
+        let cli = Cli::try_parse_from([
+            "ytcli",
+            "playlist",
+            "https://youtube.com/playlist?list=PLx",
+            "--play",
+            "-n",
+            "25",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Playlist { url, play, limit } => {
+                assert!(url.contains("list=PLx"));
+                assert!(play);
+                assert_eq!(limit, 25);
+            }
+            _ => panic!("expected Playlist"),
+        }
+    }
+
+    #[test]
+    fn parse_shuffle_loop_unloop() {
+        assert!(matches!(
+            Cli::try_parse_from(["ytcli", "shuffle"]).unwrap().command,
+            Commands::Shuffle
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["ytcli", "loop"]).unwrap().command,
+            Commands::Loop
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["ytcli", "unloop"]).unwrap().command,
+            Commands::Unloop
+        ));
     }
 }

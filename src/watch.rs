@@ -30,6 +30,16 @@ where
     L: FnMut(&Track) -> Result<()>,
     Q: FnMut() -> Result<()>,
 {
+    if state.loop_current {
+        if let Some(index) = state.current_index {
+            let track = state.queue[index].clone();
+            load(&track)?;
+            queue::apply_index(state, index);
+            return Ok(AdvanceOutcome::Advanced);
+        }
+        state.loop_current = false;
+    }
+
     match queue::try_next_index(state) {
         Ok(index) => {
             let track = state.queue[index].clone();
@@ -49,6 +59,53 @@ where
 
 fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<AdvanceOutcome>> {
     let yt_dlp = YtDlp::default();
+
+    if observed.loop_current {
+        let Some(index) = observed.current_index else {
+            let mut state = AppState::load()?;
+            if !watch_is_owned(&state, own_pid) {
+                return Ok(None);
+            }
+            queue::clear_loop(&mut state);
+            state.save()?;
+            return advance_after_eof(own_pid, &state);
+        };
+        let observed_track = observed
+            .queue
+            .get(index)
+            .cloned()
+            .or_else(|| observed.now_playing.clone());
+        let Some(observed_track) = observed_track else {
+            return Ok(None);
+        };
+        let url = match yt_dlp.resolve_audio_url(&observed_track.webpage_url) {
+            Ok(url) => url,
+            Err(error) => {
+                log_watch_error(&error);
+                return Ok(None);
+            }
+        };
+
+        let state = AppState::load()?;
+        if !watch_is_owned(&state, own_pid) {
+            return Ok(None);
+        }
+        if !state.loop_current {
+            return Ok(None);
+        }
+        let Some(current) = state.current_index else {
+            return Ok(None);
+        };
+        if state.queue.get(current).map(|t| &t.id) != Some(&observed_track.id) {
+            return Ok(None);
+        }
+
+        let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
+        Mpv::loadfile(&socket, &url)?;
+        state.save()?;
+        return Ok(Some(AdvanceOutcome::Advanced));
+    }
+
     match queue::try_next_index(observed) {
         Ok(observed_index) => {
             let observed_track = observed.queue[observed_index].clone();
@@ -345,6 +402,33 @@ mod tests {
             state.now_playing.as_ref().map(|track| track.id.as_str()),
             Some("b")
         );
+    }
+
+    #[test]
+    fn advance_after_eof_with_loop_reloads_current() {
+        let mut state = AppState {
+            queue: vec![track("a"), track("b")],
+            current_index: Some(0),
+            now_playing: Some(track("a")),
+            loop_current: true,
+            ..Default::default()
+        };
+        let mut loaded = None;
+
+        let outcome = advance_after_eof_with(
+            &mut state,
+            |next| {
+                loaded = Some(next.id.clone());
+                Ok(())
+            },
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, AdvanceOutcome::Advanced);
+        assert_eq!(loaded.as_deref(), Some("a"));
+        assert_eq!(state.current_index, Some(0));
+        assert!(state.loop_current);
     }
 
     #[test]

@@ -59,6 +59,87 @@ pub fn apply_index(state: &mut AppState, index: usize) {
     state.now_playing = state.queue.get(index).cloned();
 }
 
+/// Shuffle only tracks after the current one. Returns how many pending tracks were shuffled.
+pub fn shuffle_pending(state: &mut AppState) -> usize {
+    let Some(index) = state.current_index else {
+        if state.queue.len() < 2 {
+            return 0;
+        }
+        // No current playback: shuffle entire queue in place.
+        let mut rng = SimpleRng::from_entropy();
+        fisher_yates(&mut state.queue, &mut rng);
+        return state.queue.len();
+    };
+    if index + 1 >= state.queue.len() {
+        return 0;
+    }
+    let pending = &mut state.queue[index + 1..];
+    let count = pending.len();
+    let mut rng = SimpleRng::from_entropy();
+    fisher_yates(pending, &mut rng);
+    count
+}
+
+pub fn clear_loop(state: &mut AppState) {
+    state.loop_current = false;
+}
+
+/// Tiny LCG so we avoid a rand dependency for shuffle.
+struct SimpleRng(u64);
+
+impl SimpleRng {
+    fn from_entropy() -> Self {
+        let mut seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x5A17);
+        seed ^= std::process::id() as u64;
+        Self(seed | 1)
+    }
+
+    #[cfg(test)]
+    fn from_seed(seed: u64) -> Self {
+        Self(seed | 1)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        // Numerical Recipes LCG
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.0
+    }
+
+    fn gen_range(&mut self, len: usize) -> usize {
+        (self.next_u64() as usize) % len
+    }
+}
+
+fn fisher_yates<T>(items: &mut [T], rng: &mut SimpleRng) {
+    for i in (1..items.len()).rev() {
+        let j = rng.gen_range(i + 1);
+        items.swap(i, j);
+    }
+}
+
+#[cfg(test)]
+pub fn shuffle_pending_with_seed(state: &mut AppState, seed: u64) -> usize {
+    let Some(index) = state.current_index else {
+        if state.queue.len() < 2 {
+            return 0;
+        }
+        let mut rng = SimpleRng::from_seed(seed);
+        fisher_yates(&mut state.queue, &mut rng);
+        return state.queue.len();
+    };
+    if index + 1 >= state.queue.len() {
+        return 0;
+    }
+    let pending = &mut state.queue[index + 1..];
+    let count = pending.len();
+    let mut rng = SimpleRng::from_seed(seed);
+    fisher_yates(pending, &mut rng);
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +288,62 @@ mod tests {
 
         assert_eq!(state.current_index, Some(1));
         assert_eq!(state.now_playing.as_ref().unwrap().id, "b");
+    }
+
+    #[test]
+    fn shuffle_pending_keeps_current_and_preserves_pending_set() {
+        let mut state = AppState {
+            queue: vec![
+                track("a", "A"),
+                track("b", "B"),
+                track("c", "C"),
+                track("d", "D"),
+            ],
+            current_index: Some(0),
+            now_playing: Some(track("a", "A")),
+            ..Default::default()
+        };
+
+        let count = shuffle_pending_with_seed(&mut state, 42);
+        assert_eq!(count, 3);
+        assert_eq!(state.queue[0].id, "a");
+        assert_eq!(state.current_index, Some(0));
+        let mut pending: Vec<_> = state.queue[1..].iter().map(|t| t.id.as_str()).collect();
+        pending.sort();
+        assert_eq!(pending, vec!["b", "c", "d"]);
+    }
+
+    #[test]
+    fn fisher_yates_with_seed_can_reorder() {
+        let mut items = vec!["b", "c", "d", "e", "f"];
+        let original = items.clone();
+        let mut rng = SimpleRng::from_seed(7);
+        fisher_yates(&mut items, &mut rng);
+        assert_ne!(items, original);
+        items.sort();
+        let mut expected = original;
+        expected.sort();
+        assert_eq!(items, expected);
+    }
+
+    #[test]
+    fn shuffle_pending_noop_without_pending() {
+        let mut state = AppState {
+            queue: vec![track("a", "A")],
+            current_index: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(shuffle_pending(&mut state), 0);
+        assert_eq!(state.queue[0].id, "a");
+    }
+
+    #[test]
+    fn clear_loop_sets_flag_false() {
+        let mut state = AppState {
+            loop_current: true,
+            ..Default::default()
+        };
+        clear_loop(&mut state);
+        assert!(!state.loop_current);
     }
 }

@@ -15,6 +15,10 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Next => cmd_next(),
         Commands::Prev { force } => cmd_prev(force),
         Commands::Clear => cmd_clear(),
+        Commands::Shuffle => cmd_shuffle(),
+        Commands::Playlist { url, play, limit } => cmd_playlist(&url, play, limit),
+        Commands::Loop => cmd_loop(true),
+        Commands::Unloop => cmd_loop(false),
         Commands::Watch => cmd_watch(),
         Commands::Pause => cmd_pause(true),
         Commands::Resume => cmd_pause(false),
@@ -90,6 +94,7 @@ fn cmd_queue() -> Result<()> {
 fn cmd_next() -> Result<()> {
     let mut state = AppState::load()?;
     let next = queue::try_next_index(&state)?;
+    queue::clear_loop(&mut state);
     load_queue_index(&mut state, next)?;
     state.save()?;
     warn_if_watch_fails(&mut state);
@@ -108,6 +113,7 @@ fn cmd_prev(force: bool) -> Result<()> {
             println!("⏮ Pista reiniciada");
         }
         PrevAction::GoTo(index) => {
+            queue::clear_loop(&mut state);
             load_queue_index_at_socket(&mut state, index, &socket)?;
             state.save()?;
         }
@@ -127,6 +133,79 @@ fn cmd_clear() -> Result<()> {
     Ok(())
 }
 
+fn cmd_shuffle() -> Result<()> {
+    let mut state = AppState::load()?;
+    let count = queue::shuffle_pending(&mut state);
+    state.save()?;
+    if count == 0 {
+        println!("Nada que mezclar en la cola pendiente.");
+    } else {
+        println!("Mezcladas {count} pistas pendientes.");
+    }
+    Ok(())
+}
+
+fn cmd_playlist(url: &str, play: bool, limit: usize) -> Result<()> {
+    let yt_dlp = YtDlp::default();
+    yt_dlp.ensure_bin()?;
+    let (title, tracks) = yt_dlp.fetch_playlist(url, limit)?;
+    let label = title.unwrap_or_else(|| "playlist".into());
+
+    if play {
+        let mpv = Mpv::default();
+        mpv.ensure_bin()?;
+        let first = tracks[0].clone();
+        let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+        let mut state = AppState::load()?;
+        queue::clear_loop(&mut state);
+        state.queue = tracks;
+        queue::apply_index(&mut state, 0);
+        let socket = AppState::socket_path()?;
+        let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
+        if pid != 0 {
+            state.mpv_pid = Some(pid);
+        }
+        state.ipc_socket = Some(socket.clone());
+        Mpv::loadfile(&socket, &url_audio)?;
+        let n = state.queue.len();
+        state.save()?;
+        warn_if_watch_fails(&mut state);
+        println!(
+            "▶ Playlist «{label}»: {n} pistas. Reproduciendo {} — {}",
+            first.title, first.uploader
+        );
+        return Ok(());
+    }
+
+    let added = tracks.len();
+    let mut state = AppState::load()?;
+    for track in tracks {
+        queue::enqueue(&mut state, track);
+    }
+    state.save()?;
+    println!("Encoladas {added} pistas desde «{label}».");
+    Ok(())
+}
+
+fn cmd_loop(enable: bool) -> Result<()> {
+    let mut state = AppState::load()?;
+    if enable {
+        if state.now_playing.is_none() && state.current_index.is_none() {
+            return Err(YtcliError::NotPlaying);
+        }
+        state.loop_current = true;
+        state.save()?;
+        println!("🔁 Loop activado en la pista actual.");
+    } else if !state.loop_current {
+        println!("Loop ya estaba desactivado.");
+    } else {
+        queue::clear_loop(&mut state);
+        state.save()?;
+        println!("Loop desactivado.");
+    }
+    Ok(())
+}
+
 fn cmd_watch() -> Result<()> {
     crate::watch::run_watch_loop()
 }
@@ -138,6 +217,7 @@ fn cmd_play(target: &str) -> Result<()> {
 
     let mut state = AppState::load()?;
     let track = resolve_target(&state, &yt_dlp, target)?;
+    queue::clear_loop(&mut state);
     queue::replace_queue(&mut state, track.clone());
     let url = yt_dlp.resolve_audio_url(&track.webpage_url)?;
     let socket = AppState::socket_path()?;
@@ -324,8 +404,10 @@ fn print_status(state: &AppState, socket: &Path) -> Result<()> {
         .map(format_clock)
         .unwrap_or_else(|_| "?:??".into());
     println!(
-        "▶ [{current}/{total}] {} — {}  {position} / {duration}",
-        track.title, track.uploader
+        "{} [{current}/{total}] {} — {}  {position} / {duration}",
+        if state.loop_current { "🔁" } else { "▶" },
+        track.title,
+        track.uploader
     );
     Ok(())
 }

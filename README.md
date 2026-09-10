@@ -72,6 +72,29 @@ ytcli play "lofi hip hop"
 | `prev` | Si llevas más de 3 s en la pista → vuelve al inicio; si no → pista anterior. |
 | `prev -f` / `prev --force` | Siempre salta a la pista anterior (sin reiniciar la actual). |
 | `clear` | Elimina las pistas pendientes; la cola queda solo con la actual. **No** detiene la reproducción. |
+| `shuffle` | Mezcla solo las pistas **pendientes** (después de la actual). La que suena no cambia. |
+
+### Playlist de YouTube
+
+```bash
+# Encola hasta 100 pistas (por defecto) sin interrumpir
+ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx"
+
+# Reemplaza la cola y reproduce desde el primero
+ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" --play
+
+# Limitar cantidad
+ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" -n 30
+```
+
+### Loop de la pista actual
+
+```bash
+ytcli loop      # al terminar, vuelve a empezar la misma
+ytcli unloop    # quita el loop
+```
+
+El loop se **desactiva** automáticamente con `next`, `prev -f`, `prev` (si salta a otra pista), `play`, `playlist --play` y `stop`. Un `prev` que solo reinicia la pista (regla de 3 s) **mantiene** el loop.
 
 Ejemplo:
 
@@ -81,6 +104,7 @@ ytcli play 1
 ytcli add 2
 ytcli add 3
 ytcli queue
+ytcli shuffle
 ytcli next
 ytcli prev
 ytcli prev -f
@@ -89,7 +113,7 @@ ytcli clear
 
 ### Auto-avance
 
-Al reproducir (`play`, `next`, etc.), ytcli lanza en segundo plano un proceso interno **`watch`** que observa mpv vía IPC. Cuando termina la pista actual, avanza automáticamente a la siguiente. Al llegar al final de la cola, hace un **stop limpio** (sin repetir ni dar la vuelta).
+Al reproducir (`play`, `next`, `playlist --play`, etc.), ytcli lanza en segundo plano un proceso interno **`watch`** que observa mpv vía IPC. Cuando termina la pista actual, avanza automáticamente a la siguiente (o la reinicia si hay `loop`). Al llegar al final de la cola sin loop, hace un **stop limpio** (sin repetir ni dar la vuelta).
 
 `ytcli watch` existe como comando interno/avanzado; no hace falta invocarlo a mano en el flujo normal.
 
@@ -113,6 +137,7 @@ Ambos muestran la pista actual con posición en cola y progreso temporal:
 
 ```text
 ▶ [2/5] Título — Artista  1:23 / 3:45
+🔁 [2/5] Título — Artista  1:23 / 3:45   # con loop activo
 ```
 
 Formato: `[i/n]` (índice actual / total en cola), luego título, artista y `posición / duración` (`m:ss`, o `h:mm:ss` si la pista dura ≥ 1 h). Si no hay reproducción activa, indican que no hay nada sonando.

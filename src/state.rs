@@ -25,6 +25,8 @@ pub struct AppState {
     pub current_index: Option<usize>,
     #[serde(default)]
     pub watch_pid: Option<u32>,
+    #[serde(default)]
+    pub loop_current: bool,
 }
 
 impl AppState {
@@ -99,6 +101,7 @@ impl AppState {
         self.ipc_socket = None;
         self.now_playing = None;
         self.watch_pid = None;
+        self.loop_current = false;
     }
 
     pub fn clear_queue(&mut self) {
@@ -175,14 +178,25 @@ mod tests {
             last_search: vec![track("x", "t")],
             queue: vec![track("a", "A")],
             current_index: Some(0),
+            loop_current: true,
         };
         s.clear_playback();
         assert!(s.mpv_pid.is_none());
         assert!(s.now_playing.is_none());
         assert!(s.watch_pid.is_none());
+        assert!(!s.loop_current);
         assert_eq!(s.last_search.len(), 1);
         assert_eq!(s.queue.len(), 1);
         assert_eq!(s.current_index, Some(0));
+    }
+
+    #[test]
+    fn load_legacy_state_defaults_loop_current_false() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        fs::write(&path, r#"{"last_search":[],"queue":[]}"#).unwrap();
+        let s = AppState::load_from(&path).unwrap();
+        assert!(!s.loop_current);
     }
 
     #[test]

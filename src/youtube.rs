@@ -70,6 +70,71 @@ impl YtDlp {
         }
         Ok(url)
     }
+
+    /// Fetch tracks from a YouTube playlist URL (flat, no download).
+    /// Returns `(playlist_title, tracks)`. Invalid entries are skipped.
+    pub fn fetch_playlist(
+        &self,
+        playlist_url: &str,
+        limit: usize,
+    ) -> Result<(Option<String>, Vec<Track>)> {
+        self.ensure_bin()?;
+        let args = playlist_args(playlist_url, limit);
+        let output = Command::new(&self.bin)
+            .args(&args)
+            .output()
+            .map_err(|e| YtcliError::YtDlp(e.to_string()))?;
+        if !output.status.success() {
+            return Err(YtcliError::YtDlp(
+                String::from_utf8_lossy(&output.stderr).into(),
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (title, tracks, skipped) = parse_playlist_jsonl(&stdout);
+        if tracks.is_empty() {
+            return Err(YtcliError::NoSearchResults);
+        }
+        if skipped > 0 {
+            eprintln!("Advertencia: se omitieron {skipped} entradas inválidas de la playlist.");
+        }
+        Ok((title, tracks))
+    }
+}
+
+pub(crate) fn playlist_args(playlist_url: &str, limit: usize) -> Vec<String> {
+    vec![
+        "--flat-playlist".into(),
+        "--dump-json".into(),
+        "--no-download".into(),
+        "--playlist-end".into(),
+        limit.to_string(),
+        playlist_url.into(),
+    ]
+}
+
+/// Parse flat playlist JSONL. Skips bad lines; returns optional title from first row with playlist.
+pub(crate) fn parse_playlist_jsonl(stdout: &str) -> (Option<String>, Vec<Track>, usize) {
+    let mut tracks = Vec::new();
+    let mut skipped = 0usize;
+    let mut title = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<YtRow>(line) else {
+            skipped += 1;
+            continue;
+        };
+        if title.is_none() {
+            title = row.playlist_title.clone().or(row.playlist.clone());
+        }
+        match row.into_track() {
+            Ok(track) => tracks.push(track),
+            Err(_) => skipped += 1,
+        }
+    }
+    (title, tracks, skipped)
 }
 
 pub(crate) fn search_args(query: &str, limit: usize) -> Vec<String> {
@@ -103,6 +168,8 @@ struct YtRow {
     webpage_url: Option<String>,
     url: Option<String>,
     duration: Option<f64>,
+    playlist: Option<String>,
+    playlist_title: Option<String>,
 }
 
 impl YtRow {
@@ -160,5 +227,24 @@ mod tests {
         assert!(args
             .iter()
             .any(|a| a.contains("ytsearch5:lofi") || a.as_str() == "ytsearch5:lofi"));
+    }
+
+    #[test]
+    fn playlist_args_include_url_and_limit() {
+        let args = playlist_args("https://youtube.com/playlist?list=PLtest", 50);
+        assert!(args.iter().any(|a| a == "--playlist-end"));
+        assert!(args.iter().any(|a| a == "50"));
+        assert!(args.iter().any(|a| a.contains("playlist?list=PLtest")));
+    }
+
+    #[test]
+    fn parse_playlist_jsonl_skips_invalid_and_keeps_title() {
+        let raw = include_str!("../tests/fixtures/yt_playlist_three.jsonl");
+        let (title, tracks, skipped) = parse_playlist_jsonl(raw);
+        assert_eq!(title.as_deref(), Some("My Mix"));
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(skipped, 1);
+        assert_eq!(tracks[0].id, "pl1");
+        assert_eq!(tracks[1].uploader, "Artist B");
     }
 }
