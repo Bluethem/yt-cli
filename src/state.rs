@@ -19,6 +19,12 @@ pub struct AppState {
     pub now_playing: Option<Track>,
     #[serde(default)]
     pub last_search: Vec<Track>,
+    #[serde(default)]
+    pub queue: Vec<Track>,
+    #[serde(default)]
+    pub current_index: Option<usize>,
+    #[serde(default)]
+    pub watch_pid: Option<u32>,
 }
 
 impl AppState {
@@ -85,6 +91,12 @@ impl AppState {
         self.mpv_pid = None;
         self.ipc_socket = None;
         self.now_playing = None;
+        self.watch_pid = None;
+    }
+
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+        self.current_index = None;
     }
 }
 
@@ -111,30 +123,70 @@ mod tests {
         assert_eq!(loaded.last_search[0].id, "abc");
     }
 
+    fn track(id: &str, title: &str) -> Track {
+        Track {
+            id: id.into(),
+            title: title.into(),
+            uploader: "u".into(),
+            webpage_url: format!("http://{id}"),
+            duration_secs: None,
+        }
+    }
+
     #[test]
-    fn clear_playback_keeps_search() {
+    fn load_legacy_state_without_queue_fields() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        fs::write(&path, r#"{"last_search":[]}"#).unwrap();
+        let s = AppState::load_from(&path).unwrap();
+        assert!(s.queue.is_empty());
+        assert!(s.current_index.is_none());
+        assert!(s.watch_pid.is_none());
+    }
+
+    #[test]
+    fn clear_playback_keeps_search_and_queue() {
         let mut s = AppState {
             mpv_pid: Some(1),
             ipc_socket: Some(PathBuf::from("/tmp/x.sock")),
-            now_playing: Some(Track {
-                id: "x".into(),
-                title: "t".into(),
-                uploader: "u".into(),
-                webpage_url: "http://x".into(),
-                duration_secs: None,
-            }),
-            last_search: vec![Track {
-                id: "x".into(),
-                title: "t".into(),
-                uploader: "u".into(),
-                webpage_url: "http://x".into(),
-                duration_secs: None,
-            }],
+            now_playing: Some(track("x", "t")),
+            watch_pid: Some(99),
+            last_search: vec![track("x", "t")],
+            queue: vec![track("a", "A")],
+            current_index: Some(0),
+            ..Default::default()
         };
         s.clear_playback();
         assert!(s.mpv_pid.is_none());
         assert!(s.now_playing.is_none());
+        assert!(s.watch_pid.is_none());
         assert_eq!(s.last_search.len(), 1);
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.current_index, Some(0));
+    }
+
+    #[test]
+    fn clear_playback_keeps_queue() {
+        let mut s = AppState::default();
+        s.queue.push(track("a", "A"));
+        s.current_index = Some(0);
+        s.mpv_pid = Some(1);
+        s.clear_playback();
+        assert!(s.mpv_pid.is_none());
+        assert_eq!(s.queue.len(), 1);
+        assert_eq!(s.current_index, Some(0));
+    }
+
+    #[test]
+    fn clear_queue_empties_queue_and_index() {
+        let mut s = AppState::default();
+        s.queue.push(track("a", "A"));
+        s.current_index = Some(0);
+        s.mpv_pid = Some(1);
+        s.clear_queue();
+        assert!(s.queue.is_empty());
+        assert!(s.current_index.is_none());
+        assert_eq!(s.mpv_pid, Some(1));
     }
 
     #[test]

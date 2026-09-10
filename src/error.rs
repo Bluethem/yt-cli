@@ -20,6 +20,12 @@ pub enum YtcliError {
     #[error("no hay reproducción activa")]
     NotPlaying,
 
+    #[error("no hay siguiente pista en la cola")]
+    NoNext,
+
+    #[error("no hay pista anterior en la cola")]
+    NoPrevious,
+
     #[error("volumen inválido: {0} (debe estar entre 0 y 100)")]
     InvalidVolume(u8),
 
@@ -78,6 +84,18 @@ mod tests {
     fn not_playing_display() {
         let err = YtcliError::NotPlaying;
         assert_eq!(err.to_string(), "no hay reproducción activa");
+    }
+
+    #[test]
+    fn no_next_display() {
+        let err = YtcliError::NoNext;
+        assert_eq!(err.to_string(), "no hay siguiente pista en la cola");
+    }
+
+    #[test]
+    fn no_previous_display() {
+        let err = YtcliError::NoPrevious;
+        assert_eq!(err.to_string(), "no hay pista anterior en la cola");
     }
 
     #[test]
