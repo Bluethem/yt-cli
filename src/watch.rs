@@ -191,11 +191,41 @@ fn process_is_watch(pid: u32) -> bool {
 }
 
 fn matches_watch_process(current_exe: &Path, process_exe: &Path, cmdline: &[u8]) -> bool {
-    current_exe == process_exe
-        && cmdline
-            .split(|byte| *byte == 0)
-            .skip(1)
-            .any(|argument| argument == b"watch")
+    if current_exe != process_exe {
+        return false;
+    }
+
+    let args: Vec<&[u8]> = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .collect();
+
+    if args.get(1).copied() != Some(b"watch") {
+        return false;
+    }
+
+    args.first().is_none_or(|argv0| argv0_looks_like_binary(argv0, current_exe))
+}
+
+fn argv0_looks_like_binary(argv0: &[u8], current_exe: &Path) -> bool {
+    let Ok(argv0_str) = std::str::from_utf8(argv0) else {
+        return false;
+    };
+    let argv0_path = Path::new(argv0_str);
+
+    if argv0_path == current_exe {
+        return true;
+    }
+
+    match (argv0_path.file_name(), current_exe.file_name()) {
+        (Some(argv0_name), Some(exe_name)) if argv0_name == exe_name => return true,
+        _ => {}
+    }
+
+    match (argv0_path.canonicalize(), current_exe.canonicalize()) {
+        (Ok(resolved_argv0), Ok(resolved_exe)) => resolved_argv0 == resolved_exe,
+        _ => false,
+    }
 }
 
 fn clear_own_pid(state: &mut AppState) -> Result<()> {
@@ -303,6 +333,16 @@ mod tests {
             executable,
             executable,
             b"/usr/bin/ytcli\0status\0"
+        ));
+        assert!(!matches_watch_process(
+            executable,
+            executable,
+            b"/usr/bin/ytcli\0play\0watch\0"
+        ));
+        assert!(!matches_watch_process(
+            executable,
+            executable,
+            b"/usr/bin/other\0watch\0"
         ));
     }
 
