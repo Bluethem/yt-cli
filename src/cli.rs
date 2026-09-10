@@ -30,6 +30,24 @@ pub enum Commands {
     Play {
         target: String,
     },
+    /// Encola sin interrumpir la reproducción actual
+    Add {
+        target: String,
+    },
+    /// Muestra la cola de reproducción
+    #[command(visible_alias = "list")]
+    Queue,
+    /// Pasa a la siguiente pista en cola
+    Next,
+    /// Pista anterior o reinicio si llevas poco tiempo
+    Prev {
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    },
+    /// Deja en cola solo la pista actual
+    Clear,
+    /// Bucle interno de auto-avance (avanzado)
+    Watch,
     Pause,
     Resume,
     Stop,
@@ -85,5 +103,41 @@ mod tests {
     fn reject_invalid_ranges() {
         assert!(Cli::try_parse_from(["ytcli", "volume", "101"]).is_err());
         assert!(Cli::try_parse_from(["ytcli", "search", "lofi", "-n", "0"]).is_err());
+    }
+
+    #[test]
+    fn parse_add() {
+        let cli = Cli::try_parse_from(["ytcli", "add", "2"]).unwrap();
+        match cli.command {
+            Commands::Add { target } => assert_eq!(target, "2"),
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn parse_prev_force() {
+        let cli = Cli::try_parse_from(["ytcli", "prev", "-f"]).unwrap();
+        match cli.command {
+            Commands::Prev { force: true } => {}
+            _ => panic!("expected Prev with force"),
+        }
+
+        let cli = Cli::try_parse_from(["ytcli", "prev", "--force"]).unwrap();
+        match cli.command {
+            Commands::Prev { force: true } => {}
+            _ => panic!("expected Prev with --force"),
+        }
+    }
+
+    #[test]
+    fn parse_queue() {
+        let cli = Cli::try_parse_from(["ytcli", "queue"]).unwrap();
+        assert!(matches!(cli.command, Commands::Queue));
+    }
+
+    #[test]
+    fn parse_list_alias() {
+        let cli = Cli::try_parse_from(["ytcli", "list"]).unwrap();
+        assert!(matches!(cli.command, Commands::Queue));
     }
 }

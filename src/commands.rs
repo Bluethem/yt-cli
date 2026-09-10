@@ -9,6 +9,12 @@ pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Search { query, limit } => cmd_search(&query, limit),
         Commands::Play { target } => cmd_play(&target),
+        Commands::Add { target } => cmd_add(&target),
+        Commands::Queue => cmd_queue(),
+        Commands::Next => cmd_next(),
+        Commands::Prev { force } => cmd_prev(force),
+        Commands::Clear => cmd_clear(),
+        Commands::Watch => cmd_watch(),
         Commands::Pause => cmd_pause(true),
         Commands::Resume => cmd_pause(false),
         Commands::Stop => cmd_stop(),
@@ -33,6 +39,30 @@ fn cmd_search(query: &str, limit: usize) -> Result<()> {
             format_duration(track.duration_secs)
         );
     }
+    Ok(())
+}
+
+fn cmd_add(_target: &str) -> Result<()> {
+    Ok(())
+}
+
+fn cmd_queue() -> Result<()> {
+    Ok(())
+}
+
+fn cmd_next() -> Result<()> {
+    Ok(())
+}
+
+fn cmd_prev(_force: bool) -> Result<()> {
+    Ok(())
+}
+
+fn cmd_clear() -> Result<()> {
+    Ok(())
+}
+
+fn cmd_watch() -> Result<()> {
     Ok(())
 }
 
