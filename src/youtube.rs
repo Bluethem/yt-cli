@@ -1,4 +1,5 @@
 use crate::state::Track;
+use crate::util::which_bin;
 use crate::{Result, YtcliError};
 use serde::Deserialize;
 use std::process::Command;
@@ -29,7 +30,9 @@ impl YtDlp {
             .output()
             .map_err(|e| YtcliError::YtDlp(e.to_string()))?;
         if !output.status.success() {
-            return Err(YtcliError::YtDlp(String::from_utf8_lossy(&output.stderr).into()));
+            return Err(YtcliError::YtDlp(
+                String::from_utf8_lossy(&output.stderr).into(),
+            ));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         let tracks = parse_search_jsonl(&stdout)?;
@@ -42,11 +45,19 @@ impl YtDlp {
     pub fn resolve_audio_url(&self, webpage_url: &str) -> Result<String> {
         self.ensure_bin()?;
         let output = Command::new(&self.bin)
-            .args(["-f", "bestaudio/bestaudio*", "-g", "--no-playlist", webpage_url])
+            .args([
+                "-f",
+                "bestaudio/bestaudio*",
+                "-g",
+                "--no-playlist",
+                webpage_url,
+            ])
             .output()
             .map_err(|e| YtcliError::YtDlp(e.to_string()))?;
         if !output.status.success() {
-            return Err(YtcliError::YtDlp(String::from_utf8_lossy(&output.stderr).into()));
+            return Err(YtcliError::YtDlp(
+                String::from_utf8_lossy(&output.stderr).into(),
+            ));
         }
         let url = String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -124,19 +135,6 @@ impl YtRow {
     }
 }
 
-fn which_bin(name: &str) -> Result<()> {
-    let ok = Command::new("sh")
-        .args(["-c", &format!("command -v {name}")])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if ok {
-        Ok(())
-    } else {
-        Err(YtcliError::MissingBinary(name.into()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,13 +147,18 @@ mod tests {
         assert_eq!(tracks[0].id, "vid1");
         assert_eq!(tracks[0].uploader, "Artist A");
         assert_eq!(tracks[1].uploader, "Artist B");
-        assert_eq!(tracks[1].webpage_url, "https://www.youtube.com/watch?v=vid2");
+        assert_eq!(
+            tracks[1].webpage_url,
+            "https://www.youtube.com/watch?v=vid2"
+        );
         assert_eq!(tracks[1].duration_secs, Some(90));
     }
 
     #[test]
     fn search_args_include_limit_and_query() {
         let args = search_args("lofi", 5);
-        assert!(args.iter().any(|a| a.contains("ytsearch5:lofi") || a.as_str() == "ytsearch5:lofi"));
+        assert!(args
+            .iter()
+            .any(|a| a.contains("ytsearch5:lofi") || a.as_str() == "ytsearch5:lofi"));
     }
 }
