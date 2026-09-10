@@ -9,8 +9,9 @@ Se quiere producto usable pronto, con UI rica más adelante.
 
 ## Decisión
 
-1. **Fase 1:** CLI básica (este spec).  
-2. **Fase 2:** TUI (`ratatui` + `crossterm`) + cola, sobre los mismos backends.
+1. **Fase 1:** CLI básica (MVP).  
+2. **Fase 1.5:** Cola + tiempo + next/prev + watch ([0008](0008-cola-watch-next-prev.md)).  
+3. **Fase 2:** TUI y/o sesión CLI interactiva, sobre los mismos backends.
 
 ## Consecuencias
 
