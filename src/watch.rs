@@ -1,9 +1,12 @@
 use crate::player::{self, Mpv};
 use crate::queue;
-use crate::state::{AppState, Track};
+use crate::state::AppState;
+#[cfg(test)]
+use crate::state::Track;
 use crate::youtube::YtDlp;
 use crate::Result;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -17,6 +20,7 @@ pub enum AdvanceOutcome {
     Finished,
 }
 
+#[cfg(test)]
 fn advance_after_eof_with<L, Q>(
     state: &mut AppState,
     mut load: L,
@@ -43,17 +47,56 @@ where
     }
 }
 
-pub fn advance_after_eof(state: &mut AppState) -> Result<AdvanceOutcome> {
-    let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
+fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<AdvanceOutcome>> {
     let yt_dlp = YtDlp::default();
-    advance_after_eof_with(
-        state,
-        |track| {
-            let url = yt_dlp.resolve_audio_url(&track.webpage_url)?;
-            Mpv::loadfile(&socket, &url)
-        },
-        || Mpv::quit(&socket),
-    )
+    match queue::try_next_index(observed) {
+        Ok(observed_index) => {
+            let observed_track = observed.queue[observed_index].clone();
+            let url = match yt_dlp.resolve_audio_url(&observed_track.webpage_url) {
+                Ok(url) => url,
+                Err(error) => {
+                    log_watch_error(&error);
+                    return Ok(None);
+                }
+            };
+
+            let mut state = AppState::load()?;
+            if !watch_is_owned(&state, own_pid) {
+                return Ok(None);
+            }
+            let Ok(index) = queue::try_next_index(&state) else {
+                return Ok(None);
+            };
+            if index != observed_index
+                || state.queue.get(index).map(|track| &track.id) != Some(&observed_track.id)
+            {
+                return Ok(None);
+            }
+
+            let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
+            queue::apply_index(&mut state, index);
+            Mpv::loadfile(&socket, &url)?;
+            state.save()?;
+            Ok(Some(AdvanceOutcome::Advanced))
+        }
+        Err(crate::YtcliError::NoNext) => {
+            let mut state = AppState::load()?;
+            if !watch_is_owned(&state, own_pid) {
+                return Ok(None);
+            }
+            if queue::try_next_index(&state).is_ok() {
+                return Ok(None);
+            }
+
+            let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
+            Mpv::quit(&socket)?;
+            state.clear_playback();
+            state.clear_queue();
+            state.save()?;
+            Ok(Some(AdvanceOutcome::Finished))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn ensure_running(state: &mut AppState) -> Result<()> {
@@ -117,7 +160,10 @@ pub fn run_watch_loop() -> Result<()> {
     let mut observed_track = None;
 
     loop {
-        let mut state = AppState::load()?;
+        let state = AppState::load()?;
+        if !watch_is_owned(&state, own_pid) {
+            return Ok(());
+        }
         let track_identity = (
             state.current_index,
             state
@@ -135,7 +181,7 @@ pub fn run_watch_loop() -> Result<()> {
             Ok(position) if position > 0.0 => had_playback = true,
             Ok(_) => {}
             Err(_) if !Mpv::is_alive(&socket) => {
-                clear_own_pid(&mut state)?;
+                clear_own_pid()?;
                 return Ok(());
             }
             Err(_) => {}
@@ -143,25 +189,25 @@ pub fn run_watch_loop() -> Result<()> {
 
         match player::get_property_bool(&socket, "idle-active") {
             Ok(idle_or_eof) if should_trigger_advance(had_playback, idle_or_eof) => {
-                let outcome = match advance_after_eof(&mut state) {
+                let outcome = match advance_after_eof(own_pid, &state) {
                     Ok(outcome) => outcome,
                     Err(error) => {
-                        clear_own_pid(&mut state)?;
+                        clear_own_pid()?;
                         return Err(error);
                     }
                 };
-                state.save()?;
                 match outcome {
-                    AdvanceOutcome::Advanced => {
+                    Some(AdvanceOutcome::Advanced) => {
                         observed_track = None;
                         had_playback = false;
                     }
-                    AdvanceOutcome::Finished => return Ok(()),
+                    Some(AdvanceOutcome::Finished) => return Ok(()),
+                    None => {}
                 }
             }
             Ok(_) => {}
             Err(_) if !Mpv::is_alive(&socket) => {
-                clear_own_pid(&mut state)?;
+                clear_own_pid()?;
                 return Ok(());
             }
             Err(_) => {}
@@ -173,6 +219,23 @@ pub fn run_watch_loop() -> Result<()> {
 
 fn should_trigger_advance(had_playback: bool, idle_or_eof: bool) -> bool {
     had_playback && idle_or_eof
+}
+
+fn watch_is_owned(state: &AppState, own_pid: u32) -> bool {
+    state.watch_pid == Some(own_pid)
+}
+
+fn log_watch_error(error: &impl std::fmt::Display) {
+    let Ok(cache_dir) = AppState::cache_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&cache_dir).is_err() {
+        return;
+    }
+    let log_path = cache_dir.join("watch.log");
+    if let Ok(mut log) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(log, "yt-dlp: {error}");
+    }
 }
 
 fn process_is_watch(pid: u32) -> bool {
@@ -204,7 +267,8 @@ fn matches_watch_process(current_exe: &Path, process_exe: &Path, cmdline: &[u8])
         return false;
     }
 
-    args.first().is_none_or(|argv0| argv0_looks_like_binary(argv0, current_exe))
+    args.first()
+        .is_none_or(|argv0| argv0_looks_like_binary(argv0, current_exe))
 }
 
 fn argv0_looks_like_binary(argv0: &[u8], current_exe: &Path) -> bool {
@@ -228,8 +292,9 @@ fn argv0_looks_like_binary(argv0: &[u8], current_exe: &Path) -> bool {
     }
 }
 
-fn clear_own_pid(state: &mut AppState) -> Result<()> {
+fn clear_own_pid() -> Result<()> {
     let own_pid = std::process::id();
+    let mut state = AppState::load()?;
     if state.watch_pid == Some(own_pid) {
         state.watch_pid = None;
         state.save()?;
@@ -377,5 +442,19 @@ mod tests {
         assert!(!should_trigger_advance(false, true));
         assert!(!should_trigger_advance(true, false));
         assert!(!should_trigger_advance(false, false));
+    }
+
+    #[test]
+    fn watcher_only_continues_while_it_owns_state() {
+        let mut state = AppState {
+            watch_pid: Some(42),
+            ..Default::default()
+        };
+
+        assert!(watch_is_owned(&state, 42));
+        state.watch_pid = Some(7);
+        assert!(!watch_is_owned(&state, 42));
+        state.watch_pid = None;
+        assert!(!watch_is_owned(&state, 42));
     }
 }

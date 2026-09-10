@@ -169,14 +169,8 @@ mod tests {
 
     #[test]
     fn decide_prev_at_start_of_track_goes_to_previous() {
-        assert_eq!(
-            decide_prev(false, 0.0, 1).unwrap(),
-            PrevAction::GoTo(0)
-        );
-        assert_eq!(
-            decide_prev(false, 2.9, 1).unwrap(),
-            PrevAction::GoTo(0)
-        );
+        assert_eq!(decide_prev(false, 0.0, 1).unwrap(), PrevAction::GoTo(0));
+        assert_eq!(decide_prev(false, 2.9, 1).unwrap(), PrevAction::GoTo(0));
     }
 
     #[test]
@@ -186,14 +180,8 @@ mod tests {
 
     #[test]
     fn decide_prev_force_always_goes_to_previous() {
-        assert_eq!(
-            decide_prev(true, 3.1, 1).unwrap(),
-            PrevAction::GoTo(0)
-        );
-        assert_eq!(
-            decide_prev(true, 0.0, 2).unwrap(),
-            PrevAction::GoTo(1)
-        );
+        assert_eq!(decide_prev(true, 3.1, 1).unwrap(), PrevAction::GoTo(0));
+        assert_eq!(decide_prev(true, 0.0, 2).unwrap(), PrevAction::GoTo(1));
     }
 
     #[test]

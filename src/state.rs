@@ -77,7 +77,14 @@ impl AppState {
         }
         let data =
             serde_json::to_string_pretty(self).map_err(|e| YtcliError::Json(e.to_string()))?;
-        fs::write(path, data).map_err(|e| YtcliError::StateIo {
+        let mut tmp_path = path.as_os_str().to_owned();
+        tmp_path.push(".tmp");
+        let tmp_path = PathBuf::from(tmp_path);
+        fs::write(&tmp_path, data).map_err(|e| YtcliError::StateIo {
+            path: tmp_path.clone(),
+            detail: e.to_string(),
+        })?;
+        fs::rename(&tmp_path, path).map_err(|e| YtcliError::StateIo {
             path: path.to_path_buf(),
             detail: e.to_string(),
         })
@@ -121,6 +128,20 @@ mod tests {
         let loaded = AppState::load_from(&path).unwrap();
         assert_eq!(loaded.last_search.len(), 1);
         assert_eq!(loaded.last_search[0].id, "abc");
+    }
+
+    #[test]
+    fn save_replaces_state_via_temporary_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let tmp_path = dir.path().join("state.json.tmp");
+        fs::write(&tmp_path, "contenido parcial").unwrap();
+
+        AppState::default().save_to(&path).unwrap();
+
+        assert!(path.exists());
+        assert!(!tmp_path.exists());
+        assert_eq!(AppState::load_from(&path).unwrap(), AppState::default());
     }
 
     fn track(id: &str, title: &str) -> Track {

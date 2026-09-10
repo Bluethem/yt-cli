@@ -107,10 +107,7 @@ impl Mpv {
 }
 
 pub fn get_property_f64(socket: &Path, name: &str) -> Result<f64> {
-    let response = send_ipc_json(
-        socket,
-        &json!({ "command": ["get_property", name] }),
-    )?;
+    let response = send_ipc_json(socket, &json!({ "command": ["get_property", name] }))?;
     data_as_f64(socket, &response)
 }
 
@@ -128,10 +125,11 @@ pub fn duration(socket: &Path) -> Result<f64> {
 }
 
 pub fn seek_absolute(socket: &Path, seconds: f64) -> Result<()> {
-    send_ipc(
-        socket,
-        &json!({ "command": ["seek", seconds, "absolute"] }),
-    )
+    send_ipc(socket, &seek_payload(seconds))
+}
+
+fn seek_payload(seconds: f64) -> Value {
+    json!({ "command": ["seek", seconds, "absolute"] })
 }
 
 pub fn ipc_command_json(command: &[&str]) -> String {
@@ -308,11 +306,9 @@ mod tests {
     #[test]
     fn get_property_response_parses_f64_data() {
         let socket = Path::new("/tmp/mpv.sock");
-        let response = ipc_response_value(
-            socket,
-            r#"{"data":42.5,"error":"success","request_id":0}"#,
-        )
-        .unwrap();
+        let response =
+            ipc_response_value(socket, r#"{"data":42.5,"error":"success","request_id":0}"#)
+                .unwrap();
 
         assert_eq!(data_as_f64(socket, &response).unwrap(), 42.5);
     }
@@ -399,8 +395,7 @@ mod tests {
     #[test]
     fn get_property_non_numeric_data_is_ipc_error() {
         let socket = Path::new("/tmp/mpv.sock");
-        let response =
-            ipc_response_value(socket, r#"{"data":"n/a","error":"success"}"#).unwrap();
+        let response = ipc_response_value(socket, r#"{"data":"n/a","error":"success"}"#).unwrap();
         let error = data_as_f64(socket, &response).unwrap_err();
 
         assert!(matches!(
@@ -411,12 +406,11 @@ mod tests {
     }
 
     #[test]
-    fn seek_absolute_payload_uses_absolute_mode() {
-        let payload = ipc_command_json(&["seek", "42.5", "absolute"]);
-
-        assert!(payload.ends_with('\n'));
-        let value: Value = serde_json::from_str(payload.trim_end()).unwrap();
-        assert_eq!(value, json!({ "command": ["seek", "42.5", "absolute"] }));
+    fn seek_payload_uses_numeric_seconds_and_absolute_mode() {
+        assert_eq!(
+            seek_payload(42.5),
+            json!({ "command": ["seek", 42.5, "absolute"] })
+        );
     }
 
     #[test]

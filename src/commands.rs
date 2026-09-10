@@ -45,8 +45,15 @@ fn cmd_search(query: &str, limit: usize) -> Result<()> {
 
 fn cmd_add(target: &str) -> Result<()> {
     let yt_dlp = YtDlp::default();
+    let track = match target.parse::<usize>() {
+        Ok(index) if index >= 1 => resolve_play_target(&AppState::load()?, target)?,
+        _ => yt_dlp
+            .search(target, 1)?
+            .into_iter()
+            .next()
+            .ok_or(YtcliError::NoSearchResults)?,
+    };
     let mut state = AppState::load()?;
-    let track = resolve_target(&state, &yt_dlp, target)?;
     queue::enqueue(&mut state, track.clone());
     let position = state.queue.len();
     state.save()?;
@@ -85,7 +92,7 @@ fn cmd_next() -> Result<()> {
     let next = queue::try_next_index(&state)?;
     load_queue_index(&mut state, next)?;
     state.save()?;
-    crate::watch::ensure_running(&mut state)?;
+    warn_if_watch_fails(&mut state);
     Ok(())
 }
 
@@ -105,15 +112,18 @@ fn cmd_prev(force: bool) -> Result<()> {
             state.save()?;
         }
     }
-    crate::watch::ensure_running(&mut state)?;
+    warn_if_watch_fails(&mut state);
     Ok(())
 }
 
 fn cmd_clear() -> Result<()> {
     let mut state = AppState::load()?;
+    let previous_len = state.queue.len();
     queue::clear_pending(&mut state);
     state.save()?;
-    println!("Cola pendiente eliminada.");
+    if state.queue.len() < previous_len {
+        println!("Cola pendiente eliminada.");
+    }
     Ok(())
 }
 
@@ -139,11 +149,15 @@ fn cmd_play(target: &str) -> Result<()> {
     state.ipc_socket = Some(socket.clone());
     Mpv::loadfile(&socket, &url)?;
     state.save()?;
-    if let Err(error) = crate::watch::ensure_running(&mut state) {
-        eprintln!("Advertencia: no se pudo iniciar el auto-avance: {error}");
-    }
+    warn_if_watch_fails(&mut state);
     println!("▶ {} — {}", track.title, track.uploader);
     Ok(())
+}
+
+fn warn_if_watch_fails(state: &mut AppState) {
+    if let Err(error) = crate::watch::ensure_running(state) {
+        eprintln!("Advertencia: no se pudo iniciar el auto-avance: {error}");
+    }
 }
 
 fn resolve_target(state: &AppState, yt_dlp: &YtDlp, target: &str) -> Result<Track> {
