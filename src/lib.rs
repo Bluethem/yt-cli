@@ -5,6 +5,7 @@ pub mod player;
 pub mod queue;
 pub mod state;
 pub mod util;
+pub mod watch;
 pub mod youtube;
 
 pub use error::{Result, YtcliError};

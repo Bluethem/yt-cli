@@ -1,5 +1,6 @@
 use crate::cli::{Cli, Commands};
-use crate::player::Mpv;
+use crate::player::{self, Mpv};
+use crate::queue::{self, PrevAction};
 use crate::state::{AppState, Track};
 use crate::youtube::YtDlp;
 use crate::{Result, YtcliError};
@@ -42,23 +43,75 @@ fn cmd_search(query: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(_target: &str) -> Result<()> {
+fn cmd_add(target: &str) -> Result<()> {
+    let yt_dlp = YtDlp::default();
+    let mut state = AppState::load()?;
+    let track = resolve_target(&state, &yt_dlp, target)?;
+    queue::enqueue(&mut state, track.clone());
+    let position = state.queue.len();
+    state.save()?;
+    println!(
+        "Añadida a la cola en la posición {position}: {} — {}",
+        track.title, track.uploader
+    );
     Ok(())
 }
 
 fn cmd_queue() -> Result<()> {
+    let state = AppState::load()?;
+    if state.queue.is_empty() {
+        println!("La cola está vacía.");
+        return Ok(());
+    }
+
+    for (index, track) in state.queue.iter().enumerate() {
+        let marker = if state.current_index == Some(index) {
+            ">"
+        } else {
+            " "
+        };
+        println!(
+            "{marker} {}. {} — {}",
+            index + 1,
+            track.title,
+            track.uploader
+        );
+    }
     Ok(())
 }
 
 fn cmd_next() -> Result<()> {
+    let mut state = AppState::load()?;
+    let next = queue::try_next_index(&state)?;
+    load_queue_index(&mut state, next)?;
+    state.save()?;
     Ok(())
 }
 
-fn cmd_prev(_force: bool) -> Result<()> {
+fn cmd_prev(force: bool) -> Result<()> {
+    let mut state = AppState::load()?;
+    let current = state.current_index.ok_or(YtcliError::NoPrevious)?;
+    let socket = require_socket(&mut state)?;
+    let time_pos = player::time_pos(&socket).unwrap_or(0.0);
+
+    match queue::decide_prev(force, time_pos, current)? {
+        PrevAction::SeekZero => {
+            player::seek_absolute(&socket, 0.0)?;
+            println!("⏮ Pista reiniciada");
+        }
+        PrevAction::GoTo(index) => {
+            load_queue_index_at_socket(&mut state, index, &socket)?;
+            state.save()?;
+        }
+    }
     Ok(())
 }
 
 fn cmd_clear() -> Result<()> {
+    let mut state = AppState::load()?;
+    queue::clear_pending(&mut state);
+    state.save()?;
+    println!("Cola pendiente eliminada.");
     Ok(())
 }
 
@@ -70,18 +123,10 @@ fn cmd_play(target: &str) -> Result<()> {
     let mpv = Mpv::default();
     let yt_dlp = YtDlp::default();
     mpv.ensure_bin()?;
-    yt_dlp.ensure_bin()?;
 
     let mut state = AppState::load()?;
-    let track = match target.parse::<usize>() {
-        Ok(index) if index >= 1 => resolve_play_target(&state, target)?,
-        _ => yt_dlp
-            .search(target, 1)?
-            .into_iter()
-            .next()
-            .ok_or(YtcliError::NoSearchResults)?,
-    };
-
+    let track = resolve_target(&state, &yt_dlp, target)?;
+    queue::replace_queue(&mut state, track.clone());
     let url = yt_dlp.resolve_audio_url(&track.webpage_url)?;
     let socket = AppState::socket_path()?;
     let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
@@ -90,13 +135,24 @@ fn cmd_play(target: &str) -> Result<()> {
         state.mpv_pid = Some(pid);
     }
     state.ipc_socket = Some(socket.clone());
-    state.save()?;
-
     Mpv::loadfile(&socket, &url)?;
-    state.now_playing = Some(track.clone());
     state.save()?;
+    if let Err(error) = crate::watch::ensure_running(&mut state) {
+        eprintln!("Advertencia: no se pudo iniciar el auto-avance: {error}");
+    }
     println!("▶ {} — {}", track.title, track.uploader);
     Ok(())
+}
+
+fn resolve_target(state: &AppState, yt_dlp: &YtDlp, target: &str) -> Result<Track> {
+    match target.parse::<usize>() {
+        Ok(index) if index >= 1 => resolve_play_target(state, target),
+        _ => yt_dlp
+            .search(target, 1)?
+            .into_iter()
+            .next()
+            .ok_or(YtcliError::NoSearchResults),
+    }
 }
 
 pub(crate) fn resolve_play_target(state: &AppState, target: &str) -> Result<Track> {
@@ -163,9 +219,13 @@ fn cmd_pause(paused: bool) -> Result<()> {
 
 fn cmd_stop() -> Result<()> {
     let mut state = AppState::load()?;
-    let socket = require_socket(&mut state)?;
-    Mpv::quit(&socket)?;
+    crate::watch::kill_watch(&mut state)?;
+    let fallback = AppState::socket_path()?;
+    if let Some(socket) = live_socket(state.ipc_socket.as_deref(), &fallback) {
+        Mpv::quit(&socket)?;
+    }
     state.clear_playback();
+    state.clear_queue();
     state.save()?;
     println!("⏹ Reproducción detenida");
     Ok(())
@@ -185,46 +245,84 @@ fn cmd_volume(level: u8) -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let mut state = AppState::load()?;
-    match require_socket(&mut state) {
-        Ok(_) => {}
+    let socket = match require_socket(&mut state) {
+        Ok(socket) => socket,
         Err(YtcliError::NotPlaying) => {
             println!("No hay nada reproduciéndose.");
             return Ok(());
         }
         Err(error) => return Err(error),
-    }
-
-    if let Some(track) = state.now_playing {
-        println!("Reproduciendo: {} — {}", track.title, track.uploader);
-    } else {
-        println!("mpv está activo.");
-    }
-    Ok(())
+    };
+    print_status(&state, &socket)
 }
 
 fn cmd_now() -> Result<()> {
     let mut state = AppState::load()?;
-    match require_socket(&mut state) {
-        Ok(_) => {}
+    let socket = match require_socket(&mut state) {
+        Ok(socket) => socket,
         Err(YtcliError::NotPlaying) => {
             println!("No hay nada reproduciéndose.");
             return Ok(());
         }
         Err(error) => return Err(error),
-    }
-
-    if let Some(track) = state.now_playing {
-        println!("▶ {} — {}", track.title, track.uploader);
-    } else {
-        println!("mpv está activo, pero no hay información de la pista.");
-    }
-    Ok(())
+    };
+    print_status(&state, &socket)
 }
 
 fn format_duration(duration_secs: Option<u64>) -> String {
     match duration_secs {
-        Some(seconds) => format!("{}:{:02}", seconds / 60, seconds % 60),
+        Some(seconds) => format_clock(seconds as f64),
         None => "--:--".into(),
+    }
+}
+
+fn load_queue_index(state: &mut AppState, index: usize) -> Result<()> {
+    let socket = require_socket(state)?;
+    load_queue_index_at_socket(state, index, &socket)
+}
+
+fn load_queue_index_at_socket(state: &mut AppState, index: usize, socket: &Path) -> Result<()> {
+    let track = state.queue.get(index).cloned().ok_or(YtcliError::NoNext)?;
+    let url = YtDlp::default().resolve_audio_url(&track.webpage_url)?;
+    Mpv::loadfile(socket, &url)?;
+    queue::apply_index(state, index);
+    println!("▶ {} — {}", track.title, track.uploader);
+    Ok(())
+}
+
+fn print_status(state: &AppState, socket: &Path) -> Result<()> {
+    let track = state
+        .current_index
+        .and_then(|index| state.queue.get(index))
+        .or(state.now_playing.as_ref());
+    let Some(track) = track else {
+        println!("mpv está activo, pero no hay información de la pista.");
+        return Ok(());
+    };
+    let current = state.current_index.map_or(1, |index| index + 1);
+    let total = state.queue.len().max(1);
+    let position = player::time_pos(socket)
+        .map(format_clock)
+        .unwrap_or_else(|_| "?:??".into());
+    let duration = player::duration(socket)
+        .map(format_clock)
+        .unwrap_or_else(|_| "?:??".into());
+    println!(
+        "▶ [{current}/{total}] {} — {}  {position} / {duration}",
+        track.title, track.uploader
+    );
+    Ok(())
+}
+
+fn format_clock(secs: f64) -> String {
+    let seconds = secs.max(0.0) as u64;
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
     }
 }
 
@@ -245,6 +343,16 @@ mod tests {
             webpage_url: format!("http://{id}"),
             duration_secs: None,
         }
+    }
+
+    #[test]
+    fn format_clock_formats_minutes_and_seconds() {
+        assert_eq!(format_clock(65.0), "1:05");
+    }
+
+    #[test]
+    fn format_clock_includes_hours_when_needed() {
+        assert_eq!(format_clock(3661.0), "1:01:01");
     }
 
     #[test]
