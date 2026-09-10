@@ -46,7 +46,16 @@ impl AppState {
             path: path.to_path_buf(),
             detail: e.to_string(),
         })?;
-        serde_json::from_str(&data).map_err(|e| YtcliError::Json(e.to_string()))
+        match serde_json::from_str(&data) {
+            Ok(state) => Ok(state),
+            Err(error) => {
+                eprintln!(
+                    "Advertencia: no se pudo leer el estado en {}: {error}. Se usará un estado vacío.",
+                    path.display()
+                );
+                Ok(Self::default())
+            }
+        }
     }
 
     pub fn load() -> Result<Self> {
@@ -134,5 +143,16 @@ mod tests {
         let path = dir.path().join("missing.json");
         let s = AppState::load_from(&path).unwrap();
         assert!(s.last_search.is_empty());
+    }
+
+    #[test]
+    fn load_corrupt_json_returns_default() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        fs::write(&path, "{not valid json").unwrap();
+
+        let state = AppState::load_from(&path).unwrap();
+
+        assert_eq!(state, AppState::default());
     }
 }

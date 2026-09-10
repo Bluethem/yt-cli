@@ -3,7 +3,7 @@ use crate::player::Mpv;
 use crate::state::{AppState, Track};
 use crate::youtube::YtDlp;
 use crate::{Result, YtcliError};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
@@ -37,27 +37,32 @@ fn cmd_search(query: &str, limit: usize) -> Result<()> {
 }
 
 fn cmd_play(target: &str) -> Result<()> {
+    let mpv = Mpv::default();
+    let yt_dlp = YtDlp::default();
+    mpv.ensure_bin()?;
+    yt_dlp.ensure_bin()?;
+
     let mut state = AppState::load()?;
     let track = match target.parse::<usize>() {
         Ok(index) if index >= 1 => resolve_play_target(&state, target)?,
-        _ => YtDlp::default()
+        _ => yt_dlp
             .search(target, 1)?
             .into_iter()
             .next()
             .ok_or(YtcliError::NoSearchResults)?,
     };
 
-    let yt_dlp = YtDlp::default();
     let url = yt_dlp.resolve_audio_url(&track.webpage_url)?;
     let socket = AppState::socket_path()?;
-    let mpv = Mpv::default();
     let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
-    Mpv::loadfile(&socket, &url)?;
 
     if pid != 0 {
         state.mpv_pid = Some(pid);
     }
-    state.ipc_socket = Some(socket);
+    state.ipc_socket = Some(socket.clone());
+    state.save()?;
+
+    Mpv::loadfile(&socket, &url)?;
     state.now_playing = Some(track.clone());
     state.save()?;
     println!("▶ {} — {}", track.title, track.uploader);
@@ -85,16 +90,30 @@ pub(crate) fn resolve_play_target(state: &AppState, target: &str) -> Result<Trac
 }
 
 fn require_socket(state: &mut AppState) -> Result<PathBuf> {
-    let socket = state.ipc_socket.clone();
-    if let Some(socket) = socket {
-        if Mpv::is_alive(&socket) {
-            return Ok(socket);
+    let fallback = AppState::socket_path()?;
+    if let Some(socket) = live_socket(state.ipc_socket.as_deref(), &fallback) {
+        if state.ipc_socket.as_deref() != Some(socket.as_path()) {
+            state.ipc_socket = Some(socket.clone());
+            state.save()?;
         }
+        return Ok(socket);
     }
 
     state.clear_playback();
     state.save()?;
     Err(YtcliError::NotPlaying)
+}
+
+fn live_socket(saved: Option<&Path>, fallback: &Path) -> Option<PathBuf> {
+    if let Some(socket) = saved {
+        if Mpv::is_alive(socket) {
+            return Some(socket.to_path_buf());
+        }
+    }
+    if saved != Some(fallback) && Mpv::is_alive(fallback) {
+        return Some(fallback.to_path_buf());
+    }
+    None
 }
 
 fn cmd_pause(paused: bool) -> Result<()> {
@@ -183,6 +202,10 @@ fn format_duration(duration_secs: Option<u64>) -> String {
 mod tests {
     use super::*;
     use crate::state::{AppState, Track};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+    use tempfile::tempdir;
 
     fn track(id: &str, title: &str) -> Track {
         Track {
@@ -232,5 +255,26 @@ mod tests {
             cmd_volume(101),
             Err(YtcliError::InvalidVolume(101))
         ));
+    }
+
+    #[test]
+    fn live_socket_falls_back_when_saved_socket_is_dead() {
+        let dir = tempdir().unwrap();
+        let dead_socket = dir.path().join("dead.sock");
+        let fallback = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&fallback).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            stream.write_all(b"{\"error\":\"success\"}\n").unwrap();
+        });
+
+        let selected = live_socket(Some(&dead_socket), &fallback);
+
+        assert_eq!(selected.as_deref(), Some(fallback.as_path()));
+        server.join().unwrap();
     }
 }
