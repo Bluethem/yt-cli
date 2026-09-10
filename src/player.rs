@@ -138,6 +138,25 @@ fn send_ipc(socket: &Path, payload: &Value) -> Result<()> {
 
     let mut response = String::new();
     let _ = BufReader::new(stream).read_line(&mut response);
+    ipc_response_result(socket, &response)
+}
+
+fn ipc_response_result(socket: &Path, response: &str) -> Result<()> {
+    if let Ok(value) = serde_json::from_str::<Value>(&response) {
+        if let Some(error) = value.get("error") {
+            let succeeded = error.is_null() || error.as_str() == Some("success");
+            if !succeeded {
+                let detail = error
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| error.to_string());
+                return Err(YtcliError::MpvIpc {
+                    path: socket.to_path_buf(),
+                    detail,
+                });
+            }
+        }
+    }
     Ok(())
 }
 
@@ -172,5 +191,27 @@ mod tests {
             value,
             json!({ "command": ["loadfile", "https://example.com/a.m4a", "replace"] })
         );
+    }
+
+    #[test]
+    fn mpv_failure_response_is_an_ipc_error() {
+        let socket = Path::new("/tmp/mpv.sock");
+        let error = ipc_response_result(socket, r#"{"error":"property unavailable"}"#).unwrap_err();
+
+        assert!(matches!(
+            error,
+            YtcliError::MpvIpc { path, detail }
+                if path == socket && detail == "property unavailable"
+        ));
+    }
+
+    #[test]
+    fn mpv_success_null_and_unparseable_responses_are_best_effort() {
+        let socket = Path::new("/tmp/mpv.sock");
+
+        assert!(ipc_response_result(socket, r#"{"error":"success"}"#).is_ok());
+        assert!(ipc_response_result(socket, r#"{"error":null}"#).is_ok());
+        assert!(ipc_response_result(socket, "").is_ok());
+        assert!(ipc_response_result(socket, "not json").is_ok());
     }
 }
