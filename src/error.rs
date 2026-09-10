@@ -20,6 +20,9 @@ pub enum YtcliError {
     #[error("no hay reproducción activa")]
     NotPlaying,
 
+    #[error("volumen inválido: {0} (debe estar entre 0 y 100)")]
+    InvalidVolume(u8),
+
     #[error("falló yt-dlp: {0}")]
     YtDlp(String),
 
@@ -75,6 +78,15 @@ mod tests {
     fn not_playing_display() {
         let err = YtcliError::NotPlaying;
         assert_eq!(err.to_string(), "no hay reproducción activa");
+    }
+
+    #[test]
+    fn invalid_volume_display() {
+        let err = YtcliError::InvalidVolume(101);
+        assert_eq!(
+            err.to_string(),
+            "volumen inválido: 101 (debe estar entre 0 y 100)"
+        );
     }
 
     #[test]

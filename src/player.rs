@@ -142,7 +142,7 @@ fn send_ipc(socket: &Path, payload: &Value) -> Result<()> {
 }
 
 fn ipc_response_result(socket: &Path, response: &str) -> Result<()> {
-    if let Ok(value) = serde_json::from_str::<Value>(&response) {
+    if let Ok(value) = serde_json::from_str::<Value>(response) {
         if let Some(error) = value.get("error") {
             let succeeded = error.is_null() || error.as_str() == Some("success");
             if !succeeded {
