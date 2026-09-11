@@ -176,12 +176,20 @@ fn cmd_save(name: Option<String>) -> Result<()> {
     let track = current_track(&state)?;
     let dest = name.unwrap_or_else(|| crate::playlists::DEFAULT_NAME.to_string());
     let store = crate::playlists::PlaylistStore::system()?;
+    let before = store
+        .load(&dest)
+        .map(|p| p.tracks.len())
+        .unwrap_or(0);
     let pl = store.append_track(&dest, track)?;
-    println!(
-        "Guardado en «{}» ({} pistas).",
-        pl.name,
-        pl.tracks.len()
-    );
+    if pl.tracks.len() == before {
+        println!("Ya estaba en «{}».", pl.name);
+    } else {
+        println!(
+            "Guardado en «{}» ({} pistas).",
+            pl.name,
+            pl.tracks.len()
+        );
+    }
     Ok(())
 }
 
@@ -235,14 +243,20 @@ fn cmd_open(name: &str, play: bool) -> Result<()> {
     }
 
     let mut state = AppState::load()?;
+    crate::watch::kill_watch(&mut state)?;
+    let fallback = AppState::socket_path()?;
+    if let Some(socket) = live_socket(state.ipc_socket.as_deref(), &fallback) {
+        Mpv::quit(&socket)?;
+    }
+    state.clear_playback();
     queue::clear_loop(&mut state);
     state.queue = pl.tracks;
     state.current_index = None;
-    state.now_playing = None;
     state.save()?;
     println!(
-        "Cargadas {} pistas desde «{}». Usa `ytcli play 1` o `open --play`.",
+        "Cargadas {} pistas desde «{}». Usa `ytcli open «{}» --play` para reproducir.",
         state.queue.len(),
+        pl.name,
         pl.name
     );
     Ok(())

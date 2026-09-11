@@ -99,7 +99,9 @@ impl PlaylistStore {
             path: path.clone(),
             detail: e.to_string(),
         })?;
-        serde_json::from_str(&data).map_err(|e| YtcliError::Json(e.to_string()))
+        serde_json::from_str(&data).map_err(|e| {
+            YtcliError::Json(format!("{}: {e}", path.display()))
+        })
     }
 
     pub fn list(&self) -> Result<Vec<(String, usize)>> {
@@ -119,12 +121,26 @@ impl PlaylistStore {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let data = fs::read_to_string(&path).map_err(|e| YtcliError::StateIo {
-                path: path.clone(),
-                detail: e.to_string(),
-            })?;
-            let pl: LocalPlaylist =
-                serde_json::from_str(&data).map_err(|e| YtcliError::Json(e.to_string()))?;
+            let data = match fs::read_to_string(&path) {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!(
+                        "Advertencia: no se pudo leer {}: {e}",
+                        path.display()
+                    );
+                    continue;
+                }
+            };
+            let pl: LocalPlaylist = match serde_json::from_str(&data) {
+                Ok(pl) => pl,
+                Err(e) => {
+                    eprintln!(
+                        "Advertencia: no se pudo parsear {}: {e}",
+                        path.display()
+                    );
+                    continue;
+                }
+            };
             out.push((pl.name, pl.tracks.len()));
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -162,16 +178,11 @@ pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(YtcliError::InvalidPlaylistName(String::new()));
     }
-    if name == "." || name == ".." {
+    if name == ".." {
         return Err(YtcliError::InvalidPlaylistName(name.to_string()));
     }
     if name.contains('/') || name.contains('\\') {
         return Err(YtcliError::InvalidPlaylistName(name.to_string()));
-    }
-    for c in name.chars() {
-        if !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c.is_whitespace()) {
-            return Err(YtcliError::InvalidPlaylistName(name.to_string()));
-        }
     }
     Ok(())
 }
@@ -226,6 +237,26 @@ mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("").is_err());
         assert!(validate_name("ok-list").is_ok());
+        assert!(validate_name("Canción").is_ok());
+        assert!(slugify("Canción").is_ok());
+        assert!(slugify("歌曲").is_err());
+    }
+
+    #[test]
+    fn list_skips_corrupt_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PlaylistStore::at(dir.path().to_path_buf());
+        let t = Track {
+            id: "1".into(),
+            title: "A".into(),
+            uploader: "U".into(),
+            webpage_url: "u".into(),
+            duration_secs: None,
+        };
+        store.append_track("ok", t).unwrap();
+        fs::write(dir.path().join("bad.json"), "{not json").unwrap();
+        let list = store.list().unwrap();
+        assert_eq!(list, vec![("ok".into(), 1)]);
     }
 
     #[test]
