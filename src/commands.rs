@@ -22,7 +22,7 @@ pub fn run(cli: Cli) -> Result<()> {
             limit,
             save,
         } => cmd_playlist(&url, play, limit, save),
-        Commands::Save { name } => cmd_save(name.as_deref()),
+        Commands::Save { name } => cmd_save(name),
         Commands::Playlists => cmd_playlists(),
         Commands::Open { name, play } => cmd_open(&name, play),
         Commands::PlaylistRm { name, yes } => cmd_playlist_rm(&name, yes),
@@ -162,31 +162,102 @@ fn cmd_shuffle() -> Result<()> {
     Ok(())
 }
 
-// Task 4 replaces these stubs with real local-playlist implementations.
-fn cmd_save(name: Option<&str>) -> Result<()> {
-    println!("[stub] save name={name:?}");
+fn current_track(state: &AppState) -> Result<Track> {
+    if let Some(idx) = state.current_index {
+        if let Some(t) = state.queue.get(idx) {
+            return Ok(t.clone());
+        }
+    }
+    state.now_playing.clone().ok_or(YtcliError::NotPlaying)
+}
+
+fn cmd_save(name: Option<String>) -> Result<()> {
+    let state = AppState::load()?;
+    let track = current_track(&state)?;
+    let dest = name.unwrap_or_else(|| crate::playlists::DEFAULT_NAME.to_string());
+    let store = crate::playlists::PlaylistStore::system()?;
+    let pl = store.append_track(&dest, track)?;
+    println!(
+        "Guardado en «{}» ({} pistas).",
+        pl.name,
+        pl.tracks.len()
+    );
     Ok(())
 }
 
 fn cmd_playlists() -> Result<()> {
-    println!("[stub] playlists");
+    let store = crate::playlists::PlaylistStore::system()?;
+    let list = store.list()?;
+    if list.is_empty() {
+        println!("No hay playlists locales. Prueba `ytcli save` o `playlist --save`.");
+        return Ok(());
+    }
+    for (name, n) in list {
+        println!("{name}  ({n})");
+    }
     Ok(())
 }
 
 fn cmd_open(name: &str, play: bool) -> Result<()> {
-    println!("[stub] open name={name} play={play}");
+    let store = crate::playlists::PlaylistStore::system()?;
+    let pl = store.load(name)?;
+    if pl.tracks.is_empty() {
+        println!("La playlist «{}» está vacía.", pl.name);
+        return Ok(());
+    }
+
+    if play {
+        let yt_dlp = YtDlp::default();
+        yt_dlp.ensure_bin()?;
+        let mpv = Mpv::default();
+        mpv.ensure_bin()?;
+        let first = pl.tracks[0].clone();
+        let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+        let mut state = AppState::load()?;
+        queue::clear_loop(&mut state);
+        state.queue = pl.tracks;
+        queue::apply_index(&mut state, 0);
+        let socket = AppState::socket_path()?;
+        let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
+        if pid != 0 {
+            state.mpv_pid = Some(pid);
+        }
+        state.ipc_socket = Some(socket.clone());
+        Mpv::loadfile(&socket, &url_audio)?;
+        let n = state.queue.len();
+        state.save()?;
+        warn_if_watch_fails(&mut state);
+        println!(
+            "▶ Playlist «{}»: {n} pistas. Reproduciendo {} — {}",
+            pl.name, first.title, first.uploader
+        );
+        return Ok(());
+    }
+
+    let mut state = AppState::load()?;
+    queue::clear_loop(&mut state);
+    state.queue = pl.tracks;
+    state.current_index = None;
+    state.now_playing = None;
+    state.save()?;
+    println!(
+        "Cargadas {} pistas desde «{}». Usa `ytcli play 1` o `open --play`.",
+        state.queue.len(),
+        pl.name
+    );
     Ok(())
 }
 
 fn cmd_playlist_rm(name: &str, yes: bool) -> Result<()> {
-    println!("[stub] playlist-rm name={name} yes={yes}");
+    if !yes {
+        return Err(YtcliError::PlaylistRmNeedsYes(name.to_string()));
+    }
+    crate::playlists::PlaylistStore::system()?.delete(name)?;
+    println!("Playlist «{name}» eliminada.");
     Ok(())
 }
 
 fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>>) -> Result<()> {
-    if save.is_some() {
-        println!("[stub] playlist --save {save:?}");
-    }
     let yt_dlp = YtDlp::default();
     yt_dlp.ensure_bin()?;
 
@@ -196,6 +267,28 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
         yt_dlp.fetch_playlist(url, limit)?
     };
     let label = title.unwrap_or_else(|| "playlist".into());
+
+    if let Some(save_opt) = save {
+        let store = crate::playlists::PlaylistStore::system()?;
+        match save_opt {
+            None => {
+                let pl = store.append_tracks(crate::playlists::DEFAULT_NAME, tracks.clone())?;
+                println!(
+                    "Guardadas en «{}» ({} pistas).",
+                    pl.name,
+                    pl.tracks.len()
+                );
+            }
+            Some(name) => {
+                let pl = store.replace_tracks(&name, tracks.clone(), Some(url.to_string()))?;
+                println!(
+                    "Playlist local «{}» actualizada ({} pistas).",
+                    pl.name,
+                    pl.tracks.len()
+                );
+            }
+        }
+    }
 
     if play {
         let mpv = Mpv::default();
