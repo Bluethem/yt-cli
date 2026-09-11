@@ -3,3 +3,4 @@
 worktrees/
 *.sock
 .superpowers/
+.env

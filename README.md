@@ -81,8 +81,13 @@ ytcli play "lofi hip hop"
 ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx"
 
 # Spotify (playlist / álbum / track públicos): metadatos vía API → mirror YouTube
-export SPOTIFY_CLIENT_ID=…
-export SPOTIFY_CLIENT_SECRET=…
+# Opción recomendada: copia `.env.example` → `.env` y rellena las claves
+cp .env.example .env   # luego edita SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET
+
+# Alternativa: exportar a mano
+# export SPOTIFY_CLIENT_ID=…
+# export SPOTIFY_CLIENT_SECRET=…
+
 ytcli playlist "https://open.spotify.com/playlist/…"
 ytcli playlist "https://open.spotify.com/album/…" --play
 ytcli playlist "spotify:track:…" -n 1
@@ -94,7 +99,7 @@ ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" --play
 ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" -n 30
 ```
 
-Spotify **no se stream‑ea**: se usa la API (Client Credentials) para título/artista y se busca el audio en YouTube (`ytsearch1`). Crea una app en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) y exporta las variables de entorno.
+Spotify **no se stream‑ea**: se usa la API (Client Credentials) para título/artista y se busca el audio en YouTube (`ytsearch1`). Crea una app en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard). ytcli carga automáticamente un archivo **`.env`** en el directorio desde el que lo ejecutas (el `.env` no se sube a git; usa `.env.example` como plantilla).
 ### Loop de la pista actual
 
 ```bash
