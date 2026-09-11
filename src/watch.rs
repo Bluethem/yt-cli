@@ -59,6 +59,7 @@ where
 
 fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<AdvanceOutcome>> {
     let yt_dlp = YtDlp::default();
+    let cache = crate::cache::AudioCache::system()?;
 
     if observed.loop_current {
         let Some(index) = observed.current_index else {
@@ -78,13 +79,14 @@ fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<Advance
         let Some(observed_track) = observed_track else {
             return Ok(None);
         };
-        let url = match yt_dlp.resolve_audio_url(&observed_track.webpage_url) {
-            Ok(url) => url,
+        let source = match crate::playback::resolve(&observed_track, &cache, &yt_dlp) {
+            Ok(source) => source,
             Err(error) => {
                 log_watch_error(&error);
                 return Ok(None);
             }
         };
+        let load_arg = crate::playback::source_path_or_url(&source);
 
         let state = AppState::load()?;
         if !watch_is_owned(&state, own_pid) {
@@ -101,7 +103,7 @@ fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<Advance
         }
 
         let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
-        Mpv::loadfile(&socket, &url)?;
+        Mpv::loadfile(&socket, &load_arg)?;
         state.save()?;
         return Ok(Some(AdvanceOutcome::Advanced));
     }
@@ -109,13 +111,14 @@ fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<Advance
     match queue::try_next_index(observed) {
         Ok(observed_index) => {
             let observed_track = observed.queue[observed_index].clone();
-            let url = match yt_dlp.resolve_audio_url(&observed_track.webpage_url) {
-                Ok(url) => url,
+            let source = match crate::playback::resolve(&observed_track, &cache, &yt_dlp) {
+                Ok(source) => source,
                 Err(error) => {
                     log_watch_error(&error);
                     return Ok(None);
                 }
             };
+            let load_arg = crate::playback::source_path_or_url(&source);
 
             let mut state = AppState::load()?;
             if !watch_is_owned(&state, own_pid) {
@@ -132,7 +135,7 @@ fn advance_after_eof(own_pid: u32, observed: &AppState) -> Result<Option<Advance
 
             let socket = state.ipc_socket.clone().unwrap_or(AppState::socket_path()?);
             queue::apply_index(&mut state, index);
-            Mpv::loadfile(&socket, &url)?;
+            Mpv::loadfile(&socket, &load_arg)?;
             state.save()?;
             Ok(Some(AdvanceOutcome::Advanced))
         }

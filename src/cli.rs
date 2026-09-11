@@ -7,6 +7,10 @@ use clap::{Parser, Subcommand};
     about = "Escucha YouTube desde la terminal (yt-dlp + mpv)"
 )]
 pub struct Cli {
+    /// Desactiva color ANSI (también respeta NO_COLOR)
+    #[arg(long, global = true)]
+    pub no_color: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -66,10 +70,21 @@ pub enum Commands {
         /// Compatible con `--play` (p. ej. `--save favorites --play`).
         #[arg(long, num_args = 0..=1, value_name = "NOMBRE", allow_hyphen_values = false)]
         save: Option<Option<String>>,
+        /// Tras guardar (o importar), descargar audio al cache Opus
+        #[arg(long)]
+        download: bool,
     },
     /// Guarda la pista actual en una playlist local (default: liked)
     Save {
         /// Destino (default liked)
+        name: Option<String>,
+        /// También descargar al cache Opus
+        #[arg(long)]
+        download: bool,
+    },
+    /// Descarga al cache Opus (pista actual o playlist local)
+    Download {
+        /// Nombre de playlist local (sin nombre = pista actual)
         name: Option<String>,
     },
     /// Crea una playlist local vacía
@@ -217,11 +232,13 @@ mod tests {
                 play,
                 limit,
                 save,
+                download,
             } => {
                 assert!(url.contains("list=PLx"));
                 assert!(play);
                 assert_eq!(limit, 25);
                 assert!(save.is_none());
+                assert!(!download);
             }
             _ => panic!("expected Playlist"),
         }
@@ -231,12 +248,18 @@ mod tests {
     fn parse_save_default_and_named() {
         let cli = Cli::try_parse_from(["ytcli", "save"]).unwrap();
         match cli.command {
-            Commands::Save { name: None } => {}
+            Commands::Save {
+                name: None,
+                download: false,
+            } => {}
             _ => panic!(),
         }
-        let cli = Cli::try_parse_from(["ytcli", "save", "rock"]).unwrap();
+        let cli = Cli::try_parse_from(["ytcli", "save", "rock", "--download"]).unwrap();
         match cli.command {
-            Commands::Save { name: Some(n) } => assert_eq!(n, "rock"),
+            Commands::Save {
+                name: Some(n),
+                download: true,
+            } => assert_eq!(n, "rock"),
             _ => panic!(),
         }
     }

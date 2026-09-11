@@ -9,17 +9,18 @@ CLI ligera para buscar y escuchar audio de YouTube desde la terminal, usando **y
 | **Rust** (toolchain estable) | Compilar e instalar |
 | **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** | Búsqueda y extracción de URL de audio |
 | **[mpv](https://mpv.io/)** | Reproducción vía socket IPC |
+| **[ffmpeg](https://ffmpeg.org/)** | Convertir a Opus 160 al descargar offline |
 
 Comprueba que los binarios estén en el `PATH`:
 
 ```bash
-which yt-dlp mpv
+which yt-dlp mpv ffmpeg
 ```
 
 En Arch Linux:
 
 ```bash
-sudo pacman -S yt-dlp mpv
+sudo pacman -S yt-dlp mpv ffmpeg
 ```
 
 ## Instalación
@@ -103,7 +104,7 @@ Spotify **no se stream‑ea**: se usa la API (Client Credentials) para título/a
 
 ### Playlists locales
 
-Guarda pistas y playlists de YouTube en JSON bajo `~/.local/share/ytcli/playlists/` (solo metadata; reproducción = stream como la cola). Sin nombre explícito, el destino por defecto es **`liked`**.
+Guarda pistas y playlists de YouTube en JSON bajo `~/.local/share/ytcli/playlists/` (metadata). La reproducción usa **archivo Opus en cache** si existe, si no **stream**. En `queue`/`show`: `[↓]` local (verde), `[~]` stream. Sin nombre explícito, el destino por defecto es **`liked`**.
 
 ```bash
 ytcli save
@@ -112,8 +113,12 @@ ytcli create favorites
 ytcli playlist "https://www.youtube.com/playlist?list=…" --save
 ytcli playlist "https://…" --save rock
 ytcli playlist "https://…" --save favorites --play   # guardar y reproducir
+ytcli playlist "https://…" --save favorites --download --play
+ytcli save --download
+ytcli download              # pista actual → cache Opus 160
+ytcli download favorites    # toda una playlist local
 ytcli playlists
-ytcli show liked          # lista pistas; no toca la cola
+ytcli show liked          # lista pistas; [↓] local / [~] stream
 ytcli open rock           # encola al final de la cola actual (sin reemplazar ni parar)
 ytcli open rock --play    # reemplaza la cola y reproduce desde el primero
 ytcli playlist-rm rock --yes
@@ -195,6 +200,7 @@ ytcli stop
 
 - Estado: `~/.cache/ytcli/state.json` (última búsqueda, cola, índice actual, pista en reproducción, PID de mpv y de watch)
 - Playlists: `~/.local/share/ytcli/playlists/<nombre>.json` (metadata persistente)
+- Audio offline: `~/.cache/ytcli/audio/<id>.opus` + `index.json` (compartido entre playlists)
 - Socket IPC: `~/.cache/ytcli/mpv.sock`
 
 ## Desarrollo

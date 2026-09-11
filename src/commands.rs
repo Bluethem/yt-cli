@@ -1,4 +1,8 @@
+use crate::cache::AudioCache;
 use crate::cli::{Cli, Commands};
+use crate::display;
+use crate::download;
+use crate::playback::{self, PlaybackSource};
 use crate::player::{self, Mpv};
 use crate::queue::{self, PrevAction};
 use crate::state::{AppState, Track};
@@ -7,6 +11,7 @@ use crate::{Result, YtcliError};
 use std::path::{Path, PathBuf};
 
 pub fn run(cli: Cli) -> Result<()> {
+    display::set_no_color(cli.no_color);
     match cli.command {
         Commands::Search { query, limit } => cmd_search(&query, limit),
         Commands::Play { target } => cmd_play(&target),
@@ -21,8 +26,10 @@ pub fn run(cli: Cli) -> Result<()> {
             play,
             limit,
             save,
-        } => cmd_playlist(&url, play, limit, save),
-        Commands::Save { name } => cmd_save(name),
+            download,
+        } => cmd_playlist(&url, play, limit, save, download),
+        Commands::Save { name, download } => cmd_save(name, download),
+        Commands::Download { name } => cmd_download(name),
         Commands::Create { name } => cmd_create(&name),
         Commands::Playlists => cmd_playlists(),
         Commands::Show { name } => cmd_show(&name),
@@ -84,13 +91,18 @@ pub(crate) fn format_queue_line(
     track: &Track,
     is_current: bool,
     loop_on: bool,
+    is_local: bool,
 ) -> String {
     let marker = if is_current { ">" } else { " " };
     let loop_mark = if is_current && loop_on { " 🔁" } else { "" };
-    format!(
-        "{marker} {index_1based}. {} — {}{loop_mark}",
-        track.title, track.uploader
-    )
+    let body = display::format_title_uploader(&track.title, &track.uploader, is_local);
+    format!("{marker} {index_1based}. {body}{loop_mark}")
+}
+
+fn track_is_local(track: &Track) -> bool {
+    AudioCache::system()
+        .and_then(|c| c.has(&track.id))
+        .unwrap_or(false)
 }
 
 fn cmd_queue() -> Result<()> {
@@ -104,7 +116,13 @@ fn cmd_queue() -> Result<()> {
         let is_current = state.current_index == Some(index);
         println!(
             "{}",
-            format_queue_line(index + 1, track, is_current, state.loop_current)
+            format_queue_line(
+                index + 1,
+                track,
+                is_current,
+                state.loop_current,
+                track_is_local(track)
+            )
         );
     }
     Ok(())
@@ -173,7 +191,7 @@ fn current_track(state: &AppState) -> Result<Track> {
     state.now_playing.clone().ok_or(YtcliError::NotPlaying)
 }
 
-fn cmd_save(name: Option<String>) -> Result<()> {
+fn cmd_save(name: Option<String>, do_download: bool) -> Result<()> {
     let state = AppState::load()?;
     let track = current_track(&state)?;
     let dest = name.unwrap_or_else(|| crate::playlists::DEFAULT_NAME.to_string());
@@ -182,7 +200,7 @@ fn cmd_save(name: Option<String>) -> Result<()> {
         .load(&dest)
         .map(|p| p.tracks.len())
         .unwrap_or(0);
-    let pl = store.append_track(&dest, track)?;
+    let pl = store.append_track(&dest, track.clone())?;
     if pl.tracks.len() == before {
         println!("Ya estaba en «{}».", pl.name);
     } else {
@@ -191,6 +209,61 @@ fn cmd_save(name: Option<String>) -> Result<()> {
             pl.name,
             pl.tracks.len()
         );
+    }
+    if do_download {
+        download_one(&track)?;
+    }
+    Ok(())
+}
+
+fn cmd_download(name: Option<String>) -> Result<()> {
+    let yt = YtDlp::default();
+    yt.ensure_bin()?;
+    download::ensure_ffmpeg()?;
+    let cache = AudioCache::system()?;
+
+    let tracks = if let Some(pl_name) = name {
+        let store = crate::playlists::PlaylistStore::system()?;
+        store.load(&pl_name)?.tracks
+    } else {
+        let state = AppState::load()?;
+        vec![current_track(&state)?]
+    };
+
+    if tracks.is_empty() {
+        println!("No hay pistas para descargar.");
+        return Ok(());
+    }
+
+    let mut done = 0usize;
+    let mut skipped = 0usize;
+    for track in &tracks {
+        match download::download_track(track, &cache, &yt) {
+            Ok(true) => {
+                done += 1;
+                println!("↓ {} — {}", track.title, track.uploader);
+            }
+            Ok(false) => {
+                skipped += 1;
+            }
+            Err(e) => {
+                eprintln!("error al descargar {} — {}: {e}", track.title, track.uploader);
+            }
+        }
+    }
+    println!("Descarga: {done} nuevas, {skipped} ya en cache, {} total.", tracks.len());
+    Ok(())
+}
+
+fn download_one(track: &Track) -> Result<()> {
+    let yt = YtDlp::default();
+    yt.ensure_bin()?;
+    download::ensure_ffmpeg()?;
+    let cache = AudioCache::system()?;
+    if download::download_track(track, &cache, &yt)? {
+        println!("↓ Descargado: {} — {}", track.title, track.uploader);
+    } else {
+        println!("Ya estaba en cache: {} — {}", track.title, track.uploader);
     }
     Ok(())
 }
@@ -224,12 +297,12 @@ fn cmd_show(name: &str) -> Result<()> {
     }
     println!("Playlist «{}» ({} pistas):", pl.name, pl.tracks.len());
     for (index, track) in pl.tracks.iter().enumerate() {
-        println!(
-            "  {}. {} — {}",
-            index + 1,
-            track.title,
-            track.uploader
+        let body = display::format_title_uploader(
+            &track.title,
+            &track.uploader,
+            track_is_local(track),
         );
+        println!("  {}. {body}", index + 1);
     }
     Ok(())
 }
@@ -262,7 +335,8 @@ fn cmd_open(name: &str, play: bool) -> Result<()> {
     let mpv = Mpv::default();
     mpv.ensure_bin()?;
     let first = pl.tracks[0].clone();
-    let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+    let source = resolve_source(&first, &yt_dlp)?;
+    let load_arg = playback::source_path_or_url(&source);
     let mut state = AppState::load()?;
     queue::clear_loop(&mut state);
     state.queue = pl.tracks;
@@ -273,12 +347,17 @@ fn cmd_open(name: &str, play: bool) -> Result<()> {
         state.mpv_pid = Some(pid);
     }
     state.ipc_socket = Some(socket.clone());
-    Mpv::loadfile(&socket, &url_audio)?;
+    Mpv::loadfile(&socket, &load_arg)?;
     let n = state.queue.len();
     state.save()?;
     warn_if_watch_fails(&mut state);
+    let mode = if playback::is_local(&source) {
+        "archivo"
+    } else {
+        "stream"
+    };
     println!(
-        "▶ Playlist «{}»: {n} pistas. Reproduciendo {} — {}",
+        "▶ Playlist «{}»: {n} pistas ({mode}). Reproduciendo {} — {}",
         pl.name, first.title, first.uploader
     );
     Ok(())
@@ -293,7 +372,13 @@ fn cmd_playlist_rm(name: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>>) -> Result<()> {
+fn cmd_playlist(
+    url: &str,
+    play: bool,
+    limit: usize,
+    save: Option<Option<String>>,
+    do_download: bool,
+) -> Result<()> {
     let yt_dlp = YtDlp::default();
     yt_dlp.ensure_bin()?;
 
@@ -333,11 +418,24 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
         }
     }
 
+    if do_download {
+        let cache = AudioCache::system()?;
+        download::ensure_ffmpeg()?;
+        let mut n = 0usize;
+        for track in &tracks {
+            if download::download_track(track, &cache, &yt_dlp)? {
+                n += 1;
+            }
+        }
+        println!("Cache: {n} pistas descargadas (resto ya estaban).");
+    }
+
     if play {
         let mpv = Mpv::default();
         mpv.ensure_bin()?;
         let first = tracks[0].clone();
-        let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+        let source = resolve_source(&first, &yt_dlp)?;
+        let load_arg = playback::source_path_or_url(&source);
         let mut state = AppState::load()?;
         queue::clear_loop(&mut state);
         state.queue = tracks;
@@ -348,7 +446,7 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
             state.mpv_pid = Some(pid);
         }
         state.ipc_socket = Some(socket.clone());
-        Mpv::loadfile(&socket, &url_audio)?;
+        Mpv::loadfile(&socket, &load_arg)?;
         let n = state.queue.len();
         state.save()?;
         warn_if_watch_fails(&mut state);
@@ -359,7 +457,6 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
         return Ok(());
     }
 
-    // Con --save sin --play: solo persistir, no encolar (la cola de sesión se mantiene).
     if did_save {
         return Ok(());
     }
@@ -406,7 +503,8 @@ fn cmd_play(target: &str) -> Result<()> {
     let track = resolve_target(&state, &yt_dlp, target)?;
     queue::clear_loop(&mut state);
     queue::replace_queue(&mut state, track.clone());
-    let url = yt_dlp.resolve_audio_url(&track.webpage_url)?;
+    let source = resolve_source(&track, &yt_dlp)?;
+    let load_arg = playback::source_path_or_url(&source);
     let socket = AppState::socket_path()?;
     let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
 
@@ -414,10 +512,15 @@ fn cmd_play(target: &str) -> Result<()> {
         state.mpv_pid = Some(pid);
     }
     state.ipc_socket = Some(socket.clone());
-    Mpv::loadfile(&socket, &url)?;
+    Mpv::loadfile(&socket, &load_arg)?;
     state.save()?;
     warn_if_watch_fails(&mut state);
-    println!("▶ {} — {}", track.title, track.uploader);
+    let mode = if playback::is_local(&source) {
+        "↓"
+    } else {
+        "~"
+    };
+    println!("▶ [{mode}] {} — {}", track.title, track.uploader);
     Ok(())
 }
 
@@ -566,11 +669,25 @@ fn load_queue_index(state: &mut AppState, index: usize) -> Result<()> {
 
 fn load_queue_index_at_socket(state: &mut AppState, index: usize, socket: &Path) -> Result<()> {
     let track = state.queue.get(index).cloned().ok_or(YtcliError::NoNext)?;
-    let url = YtDlp::default().resolve_audio_url(&track.webpage_url)?;
-    Mpv::loadfile(socket, &url)?;
+    let source = resolve_source(&track, &YtDlp::default())?;
+    let load_arg = playback::source_path_or_url(&source);
+    match Mpv::loadfile(socket, &load_arg) {
+        Ok(()) => {}
+        Err(e) if matches!(source, PlaybackSource::Local(_)) => {
+            eprintln!("aviso: falló archivo local, usando stream ({e})");
+            let url = YtDlp::default().resolve_audio_url(&track.webpage_url)?;
+            Mpv::loadfile(socket, &url)?;
+        }
+        Err(e) => return Err(e),
+    }
     queue::apply_index(state, index);
     println!("▶ {} — {}", track.title, track.uploader);
     Ok(())
+}
+
+fn resolve_source(track: &Track, yt_dlp: &YtDlp) -> Result<PlaybackSource> {
+    let cache = AudioCache::system()?;
+    playback::resolve(track, &cache, yt_dlp)
 }
 
 fn print_status(state: &AppState, socket: &Path) -> Result<()> {
@@ -591,10 +708,9 @@ fn print_status(state: &AppState, socket: &Path) -> Result<()> {
         .map(format_clock)
         .unwrap_or_else(|_| "?:??".into());
     println!(
-        "{} [{current}/{total}] {} — {}  {position} / {duration}",
+        "{} [{current}/{total}] {}  {position} / {duration}",
         if state.loop_current { "🔁" } else { "▶" },
-        track.title,
-        track.uploader
+        display::format_title_uploader(&track.title, &track.uploader, track_is_local(track)),
     );
     Ok(())
 }
@@ -689,14 +805,17 @@ mod tests {
             webpage_url: "https://y".into(),
             duration_secs: None,
         };
-        let line = format_queue_line(1, &track, true, true);
+        display::set_no_color(true);
+        let line = format_queue_line(1, &track, true, true, false);
         assert!(line.contains('>'));
         assert!(line.contains('🔁'));
+        assert!(line.contains("[~]"));
         assert!(line.contains("T — U"));
 
-        let line2 = format_queue_line(2, &track, false, true);
+        let line2 = format_queue_line(2, &track, false, true, true);
         assert!(line2.starts_with(' ') || line2.starts_with("  "));
-        assert!(!line2.contains('🔁')); // loop solo en la actual
+        assert!(!line2.contains('🔁'));
+        assert!(line2.contains("[↓]"));
     }
 
     #[test]
