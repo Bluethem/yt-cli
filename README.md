@@ -111,8 +111,9 @@ ytcli save rock
 ytcli playlist "https://www.youtube.com/playlist?list=…" --save
 ytcli playlist "https://…" --save rock
 ytcli playlists
-ytcli open rock
-ytcli open rock --play
+ytcli show liked          # lista pistas; no toca la cola
+ytcli open rock           # encola al final de la cola actual (sin reemplazar ni parar)
+ytcli open rock --play    # reemplaza la cola y reproduce desde el primero
 ytcli playlist-rm rock --yes
 ytcli queue   # muestra 🔁 si hay loop
 ```

@@ -24,6 +24,7 @@ pub fn run(cli: Cli) -> Result<()> {
         } => cmd_playlist(&url, play, limit, save),
         Commands::Save { name } => cmd_save(name),
         Commands::Playlists => cmd_playlists(),
+        Commands::Show { name } => cmd_show(&name),
         Commands::Open { name, play } => cmd_open(&name, play),
         Commands::PlaylistRm { name, yes } => cmd_playlist_rm(&name, yes),
         Commands::Loop => cmd_loop(true),
@@ -206,6 +207,25 @@ fn cmd_playlists() -> Result<()> {
     Ok(())
 }
 
+fn cmd_show(name: &str) -> Result<()> {
+    let store = crate::playlists::PlaylistStore::system()?;
+    let pl = store.load(name)?;
+    if pl.tracks.is_empty() {
+        println!("La playlist «{}» está vacía.", pl.name);
+        return Ok(());
+    }
+    println!("Playlist «{}» ({} pistas):", pl.name, pl.tracks.len());
+    for (index, track) in pl.tracks.iter().enumerate() {
+        println!(
+            "  {}. {} — {}",
+            index + 1,
+            track.title,
+            track.uploader
+        );
+    }
+    Ok(())
+}
+
 fn cmd_open(name: &str, play: bool) -> Result<()> {
     let store = crate::playlists::PlaylistStore::system()?;
     let pl = store.load(name)?;
@@ -214,50 +234,44 @@ fn cmd_open(name: &str, play: bool) -> Result<()> {
         return Ok(());
     }
 
-    if play {
-        let yt_dlp = YtDlp::default();
-        yt_dlp.ensure_bin()?;
-        let mpv = Mpv::default();
-        mpv.ensure_bin()?;
-        let first = pl.tracks[0].clone();
-        let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+    if !play {
+        let added = pl.tracks.len();
         let mut state = AppState::load()?;
-        queue::clear_loop(&mut state);
-        state.queue = pl.tracks;
-        queue::apply_index(&mut state, 0);
-        let socket = AppState::socket_path()?;
-        let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
-        if pid != 0 {
-            state.mpv_pid = Some(pid);
+        for track in pl.tracks {
+            queue::enqueue(&mut state, track);
         }
-        state.ipc_socket = Some(socket.clone());
-        Mpv::loadfile(&socket, &url_audio)?;
-        let n = state.queue.len();
+        let total = state.queue.len();
         state.save()?;
-        warn_if_watch_fails(&mut state);
         println!(
-            "▶ Playlist «{}»: {n} pistas. Reproduciendo {} — {}",
-            pl.name, first.title, first.uploader
+            "Encoladas {added} pistas desde «{}» (cola: {total}).",
+            pl.name
         );
         return Ok(());
     }
 
+    let yt_dlp = YtDlp::default();
+    yt_dlp.ensure_bin()?;
+    let mpv = Mpv::default();
+    mpv.ensure_bin()?;
+    let first = pl.tracks[0].clone();
+    let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
     let mut state = AppState::load()?;
-    crate::watch::kill_watch(&mut state)?;
-    let fallback = AppState::socket_path()?;
-    if let Some(socket) = live_socket(state.ipc_socket.as_deref(), &fallback) {
-        Mpv::quit(&socket)?;
-    }
-    state.clear_playback();
     queue::clear_loop(&mut state);
     state.queue = pl.tracks;
-    state.current_index = None;
+    queue::apply_index(&mut state, 0);
+    let socket = AppState::socket_path()?;
+    let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
+    if pid != 0 {
+        state.mpv_pid = Some(pid);
+    }
+    state.ipc_socket = Some(socket.clone());
+    Mpv::loadfile(&socket, &url_audio)?;
+    let n = state.queue.len();
     state.save()?;
+    warn_if_watch_fails(&mut state);
     println!(
-        "Cargadas {} pistas desde «{}». Usa `ytcli open «{}» --play` para reproducir.",
-        state.queue.len(),
-        pl.name,
-        pl.name
+        "▶ Playlist «{}»: {n} pistas. Reproduciendo {} — {}",
+        pl.name, first.title, first.uploader
     );
     Ok(())
 }

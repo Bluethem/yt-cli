@@ -66,18 +66,23 @@ pub enum Commands {
         #[arg(long, num_args = 0..=1, value_name = "NOMBRE")]
         save: Option<Option<String>>,
     },
-    /// Guarda la cola actual como playlist local
+    /// Guarda la pista actual en una playlist local (default: liked)
     Save {
         /// Destino (default liked)
         name: Option<String>,
     },
     /// Lista playlists locales guardadas
     Playlists,
-    /// Abre una playlist local en la cola
+    /// Muestra las pistas de una playlist local (no toca la cola)
+    Show {
+        /// Nombre de la playlist
+        name: String,
+    },
+    /// Encola una playlist local al final de la cola actual (o reproduce con --play)
     Open {
         /// Nombre de la playlist
         name: String,
-        /// Reemplaza la cola y reproduce desde el primero
+        /// Reemplaza la cola de sesión y reproduce desde el primero
         #[arg(long)]
         play: bool,
     },
@@ -241,6 +246,15 @@ mod tests {
         match cli.command {
             Commands::Playlist { save: Some(Some(n)), .. } => assert_eq!(n, "rock"),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_show() {
+        let cli = Cli::try_parse_from(["ytcli", "show", "liked"]).unwrap();
+        match cli.command {
+            Commands::Show { name } => assert_eq!(name, "liked"),
+            _ => panic!("expected Show"),
         }
     }
 

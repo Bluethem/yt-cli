@@ -14,12 +14,14 @@ Tras cola, pulido y Spotify mirror, se quiere persistir pistas y playlists de Yo
 2. **Default `liked`** cuando no se nombra destino (`save`, `playlist --save` sin nombre).  
 3. **Reproducción = stream** (yt-dlp + mpv al vuelo); sin archivos de audio en esta fase.  
 4. **`queue` muestra loop** — pista actual con `>` y `🔁` si `loop_current`.  
-5. Comandos: `save`, `playlists`, `open`, `playlist-rm`; flag `--save` en `playlist`.  
-6. **MP3 / download** documentado como fase posterior (yt-dlp audio + re-encode).
+5. Comandos: `save`, `playlists`, `show`, `open` / `open --play`, `playlist-rm`; flag `--save` en `playlist`.  
+6. **Cola de sesión vs librería:** `save` y `show` no mutan la cola; `open` **encola** al final; solo `open --play` reemplaza la cola y reproduce.  
+7. **MP3 / download** documentado como fase posterior (yt-dlp audio + re-encode).
 
 ## Consecuencias
 
-- Cola (cache) y librería (data dir) separadas; `open` copia tracks a la cola.  
+- Cola (cache) y librería (data dir) separadas.  
+- `show` lista sin mutar; `open` append; `open --play` replace + play.  
 - Escritura atómica (temp + rename), dedup por `id` al append.  
 - Sin SQLite ni crates de audio nuevos.  
 - TUI sigue siendo fase posterior.
