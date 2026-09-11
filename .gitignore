@@ -4,3 +4,5 @@ worktrees/
 *.sock
 .superpowers/
 .env
+
+target/
