@@ -6,6 +6,7 @@ Registro de decisiones (ADR ligero). Specs:
 - Cola: [`../superpowers/specs/2026-09-10-ytcli-queue-design.md`](../superpowers/specs/2026-09-10-ytcli-queue-design.md)
 - Pulido: [`../superpowers/specs/2026-09-10-ytcli-polish-design.md`](../superpowers/specs/2026-09-10-ytcli-polish-design.md)
 - Spotify: [`../superpowers/specs/2026-09-10-ytcli-spotify-design.md`](../superpowers/specs/2026-09-10-ytcli-spotify-design.md)
+- Playlists locales + loop en queue: [`../superpowers/specs/2026-09-11-ytcli-local-playlists-design.md`](../superpowers/specs/2026-09-11-ytcli-local-playlists-design.md)
 
 | ID | Decisión | Elección |
 |----|----------|----------|
