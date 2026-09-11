@@ -56,7 +56,8 @@ pub fn download_track(track: &Track, cache: &AudioCache, yt_dlp: &YtDlp) -> Resu
     })?;
 
     let final_path = cache.file_path_for_id(&track.id);
-    let tmp_opus = cache.root().join(format!("{}.opus.tmp", track.id));
+    // Extension must end in .opus so ffmpeg picks the muxer (not `.opus.tmp`).
+    let tmp_opus = cache.root().join(format!("{}.tmp.opus", track.id));
     let bitrate = format!("{DEFAULT_BITRATE_KBPS}k");
 
     let ff = Command::new("ffmpeg")
@@ -69,6 +70,8 @@ pub fn download_track(track: &Track, cache: &AudioCache, yt_dlp: &YtDlp) -> Resu
             "libopus",
             "-b:a",
             &bitrate,
+            "-f",
+            "opus",
             "-v",
             "error",
             tmp_opus.to_str().unwrap_or(""),
@@ -106,7 +109,7 @@ fn find_download_file(cache: &AudioCache, id: &str) -> Option<std::path::PathBuf
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with(&prefix) && !name.ends_with(".tmp") {
+        if name.starts_with(&prefix) && !name.contains(".tmp.") {
             return Some(entry.path());
         }
     }
@@ -119,7 +122,7 @@ fn cleanup_globs(cache: &AudioCache, id: &str) {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if name.starts_with(&format!("{id}.ytdlp."))
-                || name == format!("{id}.opus.tmp")
+                || name == format!("{id}.tmp.opus")
             {
                 let _ = fs::remove_file(entry.path());
             }
