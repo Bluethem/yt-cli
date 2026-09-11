@@ -49,6 +49,15 @@ pub enum YtcliError {
     #[error("JSON inválido: {0}")]
     Json(String),
 
+    #[error("nombre de playlist inválido: {0}")]
+    InvalidPlaylistName(String),
+
+    #[error("no existe la playlist `{0}`; prueba `ytcli playlists`")]
+    PlaylistNotFound(String),
+
+    #[error("confirma el borrado con `ytcli playlist-rm {0} --yes`")]
+    PlaylistRmNeedsYes(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

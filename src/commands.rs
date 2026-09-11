@@ -16,7 +16,16 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Prev { force } => cmd_prev(force),
         Commands::Clear => cmd_clear(),
         Commands::Shuffle => cmd_shuffle(),
-        Commands::Playlist { url, play, limit } => cmd_playlist(&url, play, limit),
+        Commands::Playlist {
+            url,
+            play,
+            limit,
+            save,
+        } => cmd_playlist(&url, play, limit, save),
+        Commands::Save { name } => cmd_save(name),
+        Commands::Playlists => cmd_playlists(),
+        Commands::Open { name, play } => cmd_open(&name, play),
+        Commands::PlaylistRm { name, yes } => cmd_playlist_rm(&name, yes),
         Commands::Loop => cmd_loop(true),
         Commands::Unloop => cmd_loop(false),
         Commands::Watch => cmd_watch(),
@@ -68,6 +77,20 @@ fn cmd_add(target: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn format_queue_line(
+    index_1based: usize,
+    track: &Track,
+    is_current: bool,
+    loop_on: bool,
+) -> String {
+    let marker = if is_current { ">" } else { " " };
+    let loop_mark = if is_current && loop_on { " 🔁" } else { "" };
+    format!(
+        "{marker} {index_1based}. {} — {}{loop_mark}",
+        track.title, track.uploader
+    )
+}
+
 fn cmd_queue() -> Result<()> {
     let state = AppState::load()?;
     if state.queue.is_empty() {
@@ -76,16 +99,10 @@ fn cmd_queue() -> Result<()> {
     }
 
     for (index, track) in state.queue.iter().enumerate() {
-        let marker = if state.current_index == Some(index) {
-            ">"
-        } else {
-            " "
-        };
+        let is_current = state.current_index == Some(index);
         println!(
-            "{marker} {}. {} — {}",
-            index + 1,
-            track.title,
-            track.uploader
+            "{}",
+            format_queue_line(index + 1, track, is_current, state.loop_current)
         );
     }
     Ok(())
@@ -145,7 +162,116 @@ fn cmd_shuffle() -> Result<()> {
     Ok(())
 }
 
-fn cmd_playlist(url: &str, play: bool, limit: usize) -> Result<()> {
+fn current_track(state: &AppState) -> Result<Track> {
+    if let Some(idx) = state.current_index {
+        if let Some(t) = state.queue.get(idx) {
+            return Ok(t.clone());
+        }
+    }
+    state.now_playing.clone().ok_or(YtcliError::NotPlaying)
+}
+
+fn cmd_save(name: Option<String>) -> Result<()> {
+    let state = AppState::load()?;
+    let track = current_track(&state)?;
+    let dest = name.unwrap_or_else(|| crate::playlists::DEFAULT_NAME.to_string());
+    let store = crate::playlists::PlaylistStore::system()?;
+    let before = store
+        .load(&dest)
+        .map(|p| p.tracks.len())
+        .unwrap_or(0);
+    let pl = store.append_track(&dest, track)?;
+    if pl.tracks.len() == before {
+        println!("Ya estaba en «{}».", pl.name);
+    } else {
+        println!(
+            "Guardado en «{}» ({} pistas).",
+            pl.name,
+            pl.tracks.len()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_playlists() -> Result<()> {
+    let store = crate::playlists::PlaylistStore::system()?;
+    let list = store.list()?;
+    if list.is_empty() {
+        println!("No hay playlists locales. Prueba `ytcli save` o `playlist --save`.");
+        return Ok(());
+    }
+    for (name, n) in list {
+        println!("{name}  ({n})");
+    }
+    Ok(())
+}
+
+fn cmd_open(name: &str, play: bool) -> Result<()> {
+    let store = crate::playlists::PlaylistStore::system()?;
+    let pl = store.load(name)?;
+    if pl.tracks.is_empty() {
+        println!("La playlist «{}» está vacía.", pl.name);
+        return Ok(());
+    }
+
+    if play {
+        let yt_dlp = YtDlp::default();
+        yt_dlp.ensure_bin()?;
+        let mpv = Mpv::default();
+        mpv.ensure_bin()?;
+        let first = pl.tracks[0].clone();
+        let url_audio = yt_dlp.resolve_audio_url(&first.webpage_url)?;
+        let mut state = AppState::load()?;
+        queue::clear_loop(&mut state);
+        state.queue = pl.tracks;
+        queue::apply_index(&mut state, 0);
+        let socket = AppState::socket_path()?;
+        let pid = mpv.ensure_running(&socket, state.mpv_pid)?;
+        if pid != 0 {
+            state.mpv_pid = Some(pid);
+        }
+        state.ipc_socket = Some(socket.clone());
+        Mpv::loadfile(&socket, &url_audio)?;
+        let n = state.queue.len();
+        state.save()?;
+        warn_if_watch_fails(&mut state);
+        println!(
+            "▶ Playlist «{}»: {n} pistas. Reproduciendo {} — {}",
+            pl.name, first.title, first.uploader
+        );
+        return Ok(());
+    }
+
+    let mut state = AppState::load()?;
+    crate::watch::kill_watch(&mut state)?;
+    let fallback = AppState::socket_path()?;
+    if let Some(socket) = live_socket(state.ipc_socket.as_deref(), &fallback) {
+        Mpv::quit(&socket)?;
+    }
+    state.clear_playback();
+    queue::clear_loop(&mut state);
+    state.queue = pl.tracks;
+    state.current_index = None;
+    state.save()?;
+    println!(
+        "Cargadas {} pistas desde «{}». Usa `ytcli open «{}» --play` para reproducir.",
+        state.queue.len(),
+        pl.name,
+        pl.name
+    );
+    Ok(())
+}
+
+fn cmd_playlist_rm(name: &str, yes: bool) -> Result<()> {
+    if !yes {
+        return Err(YtcliError::PlaylistRmNeedsYes(name.to_string()));
+    }
+    crate::playlists::PlaylistStore::system()?.delete(name)?;
+    println!("Playlist «{name}» eliminada.");
+    Ok(())
+}
+
+fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>>) -> Result<()> {
     let yt_dlp = YtDlp::default();
     yt_dlp.ensure_bin()?;
 
@@ -155,6 +281,28 @@ fn cmd_playlist(url: &str, play: bool, limit: usize) -> Result<()> {
         yt_dlp.fetch_playlist(url, limit)?
     };
     let label = title.unwrap_or_else(|| "playlist".into());
+
+    if let Some(save_opt) = save {
+        let store = crate::playlists::PlaylistStore::system()?;
+        match save_opt {
+            None => {
+                let pl = store.append_tracks(crate::playlists::DEFAULT_NAME, tracks.clone())?;
+                println!(
+                    "Guardadas en «{}» ({} pistas).",
+                    pl.name,
+                    pl.tracks.len()
+                );
+            }
+            Some(name) => {
+                let pl = store.replace_tracks(&name, tracks.clone(), Some(url.to_string()))?;
+                println!(
+                    "Playlist local «{}» actualizada ({} pistas).",
+                    pl.name,
+                    pl.tracks.len()
+                );
+            }
+        }
+    }
 
     if play {
         let mpv = Mpv::default();
@@ -496,6 +644,25 @@ mod tests {
             cmd_volume(101),
             Err(YtcliError::InvalidVolume(101))
         ));
+    }
+
+    #[test]
+    fn format_queue_line_marks_loop_on_current() {
+        let track = Track {
+            id: "a".into(),
+            title: "T".into(),
+            uploader: "U".into(),
+            webpage_url: "https://y".into(),
+            duration_secs: None,
+        };
+        let line = format_queue_line(1, &track, true, true);
+        assert!(line.contains('>'));
+        assert!(line.contains('🔁'));
+        assert!(line.contains("T — U"));
+
+        let line2 = format_queue_line(2, &track, false, true);
+        assert!(line2.starts_with(' ') || line2.starts_with("  "));
+        assert!(!line2.contains('🔁')); // loop solo en la actual
     }
 
     #[test]
