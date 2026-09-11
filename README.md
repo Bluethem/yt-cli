@@ -67,7 +67,7 @@ ytcli play "lofi hip hop"
 | Comando | Descripción |
 |---------|-------------|
 | `add <target>` | Encola una pista sin interrumpir la actual. Mismo formato de `<target>` que `play` (índice del último `search` o consulta). |
-| `queue` / `list` | Lista la cola; marca con `>` la pista actual. |
+| `queue` / `list` | Lista la cola; marca con `>` la pista actual. Si hay loop, muestra `🔁` en esa línea. |
 | `next` | Pasa a la siguiente pista (resuelve URL al vuelo). Error si ya estás en la última. |
 | `prev` | Si llevas más de 3 s en la pista → vuelve al inicio; si no → pista anterior. |
 | `prev -f` / `prev --force` | Siempre salta a la pista anterior (sin reiniciar la actual). |
@@ -100,6 +100,23 @@ ytcli playlist "https://www.youtube.com/playlist?list=PLxxxx" -n 30
 ```
 
 Spotify **no se stream‑ea**: se usa la API (Client Credentials) para título/artista y se busca el audio en YouTube (`ytsearch1`). Crea una app en el [Spotify Developer Dashboard](https://developer.spotify.com/dashboard). ytcli carga automáticamente un archivo **`.env`** en el directorio desde el que lo ejecutas (el `.env` no se sube a git; usa `.env.example` como plantilla).
+
+### Playlists locales
+
+Guarda pistas y playlists de YouTube en JSON bajo `~/.local/share/ytcli/playlists/` (solo metadata; reproducción = stream como la cola). Sin nombre explícito, el destino por defecto es **`liked`**.
+
+```bash
+ytcli save
+ytcli save rock
+ytcli playlist "https://www.youtube.com/playlist?list=…" --save
+ytcli playlist "https://…" --save rock
+ytcli playlists
+ytcli open rock
+ytcli open rock --play
+ytcli playlist-rm rock --yes
+ytcli queue   # muestra 🔁 si hay loop
+```
+
 ### Loop de la pista actual
 
 ```bash
@@ -174,6 +191,7 @@ ytcli stop
 ## Datos locales
 
 - Estado: `~/.cache/ytcli/state.json` (última búsqueda, cola, índice actual, pista en reproducción, PID de mpv y de watch)
+- Playlists: `~/.local/share/ytcli/playlists/<nombre>.json` (metadata persistente)
 - Socket IPC: `~/.cache/ytcli/mpv.sock`
 
 ## Desarrollo

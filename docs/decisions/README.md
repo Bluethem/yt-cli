@@ -20,3 +20,4 @@ Registro de decisiones (ADR ligero). Specs:
 | [0008](0008-cola-watch-next-prev.md) | Cola + watch | state + URL al vuelo + next/prev |
 | [0009](0009-polish-shuffle-playlist-loop.md) | Pulido pre-TUI | shuffle + playlist YT + loop |
 | [0010](0010-spotify-mirror-youtube.md) | Spotify | Client Credentials → ytsearch mirror |
+| [0011](0011-local-playlists-json.md) | Playlists locales | JSON por archivo, `liked` default, stream only |
