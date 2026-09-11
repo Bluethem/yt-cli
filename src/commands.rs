@@ -68,6 +68,20 @@ fn cmd_add(target: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn format_queue_line(
+    index_1based: usize,
+    track: &Track,
+    is_current: bool,
+    loop_on: bool,
+) -> String {
+    let marker = if is_current { ">" } else { " " };
+    let loop_mark = if is_current && loop_on { " 🔁" } else { "" };
+    format!(
+        "{marker} {index_1based}. {} — {}{loop_mark}",
+        track.title, track.uploader
+    )
+}
+
 fn cmd_queue() -> Result<()> {
     let state = AppState::load()?;
     if state.queue.is_empty() {
@@ -76,16 +90,10 @@ fn cmd_queue() -> Result<()> {
     }
 
     for (index, track) in state.queue.iter().enumerate() {
-        let marker = if state.current_index == Some(index) {
-            ">"
-        } else {
-            " "
-        };
+        let is_current = state.current_index == Some(index);
         println!(
-            "{marker} {}. {} — {}",
-            index + 1,
-            track.title,
-            track.uploader
+            "{}",
+            format_queue_line(index + 1, track, is_current, state.loop_current)
         );
     }
     Ok(())
@@ -496,6 +504,25 @@ mod tests {
             cmd_volume(101),
             Err(YtcliError::InvalidVolume(101))
         ));
+    }
+
+    #[test]
+    fn format_queue_line_marks_loop_on_current() {
+        let track = Track {
+            id: "a".into(),
+            title: "T".into(),
+            uploader: "U".into(),
+            webpage_url: "https://y".into(),
+            duration_secs: None,
+        };
+        let line = format_queue_line(1, &track, true, true);
+        assert!(line.contains('>'));
+        assert!(line.contains('🔁'));
+        assert!(line.contains("T — U"));
+
+        let line2 = format_queue_line(2, &track, false, true);
+        assert!(line2.starts_with(' ') || line2.starts_with("  "));
+        assert!(!line2.contains('🔁')); // loop solo en la actual
     }
 
     #[test]
