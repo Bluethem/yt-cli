@@ -55,6 +55,9 @@ pub enum YtcliError {
     #[error("no existe la playlist `{0}`; prueba `ytcli playlists`")]
     PlaylistNotFound(String),
 
+    #[error("ya existe la playlist `{0}`")]
+    PlaylistExists(String),
+
     #[error("confirma el borrado con `ytcli playlist-rm {0} --yes`")]
     PlaylistRmNeedsYes(String),
 

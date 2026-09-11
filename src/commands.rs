@@ -23,6 +23,7 @@ pub fn run(cli: Cli) -> Result<()> {
             save,
         } => cmd_playlist(&url, play, limit, save),
         Commands::Save { name } => cmd_save(name),
+        Commands::Create { name } => cmd_create(&name),
         Commands::Playlists => cmd_playlists(),
         Commands::Show { name } => cmd_show(&name),
         Commands::Open { name, play } => cmd_open(&name, play),
@@ -194,6 +195,13 @@ fn cmd_save(name: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn cmd_create(name: &str) -> Result<()> {
+    let store = crate::playlists::PlaylistStore::system()?;
+    let pl = store.create_empty(name)?;
+    println!("Playlist «{}» creada (vacía).", pl.name);
+    Ok(())
+}
+
 fn cmd_playlists() -> Result<()> {
     let store = crate::playlists::PlaylistStore::system()?;
     let list = store.list()?;
@@ -296,6 +304,13 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
     };
     let label = title.unwrap_or_else(|| "playlist".into());
 
+    if tracks.is_empty() {
+        return Err(YtcliError::YtDlp(format!(
+            "la playlist «{label}» no devolvió pistas (URL vacía o no soportada)"
+        )));
+    }
+
+    let did_save = save.is_some();
     if let Some(save_opt) = save {
         let store = crate::playlists::PlaylistStore::system()?;
         match save_opt {
@@ -341,6 +356,11 @@ fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>
             "▶ Playlist «{label}»: {n} pistas. Reproduciendo {} — {}",
             first.title, first.uploader
         );
+        return Ok(());
+    }
+
+    // Con --save sin --play: solo persistir, no encolar (la cola de sesión se mantiene).
+    if did_save {
         return Ok(());
     }
 

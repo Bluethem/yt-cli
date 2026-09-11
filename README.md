@@ -108,8 +108,10 @@ Guarda pistas y playlists de YouTube en JSON bajo `~/.local/share/ytcli/playlist
 ```bash
 ytcli save
 ytcli save rock
+ytcli create favorites
 ytcli playlist "https://www.youtube.com/playlist?list=…" --save
 ytcli playlist "https://…" --save rock
+ytcli playlist "https://…" --save favorites --play   # guardar y reproducir
 ytcli playlists
 ytcli show liked          # lista pistas; no toca la cola
 ytcli open rock           # encola al final de la cola actual (sin reemplazar ni parar)

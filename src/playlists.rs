@@ -90,6 +90,25 @@ impl PlaylistStore {
         Ok(pl)
     }
 
+    /// Crea una playlist vacía. Falla si ya existe.
+    pub fn create_empty(&self, name: &str) -> Result<LocalPlaylist> {
+        let display_name = name.trim().to_string();
+        validate_name(&display_name)?;
+        if self.path_for(&display_name)?.exists() {
+            return Err(YtcliError::PlaylistExists(display_name));
+        }
+        let now = now_rfc3339();
+        let pl = LocalPlaylist {
+            name: display_name,
+            created_at: now.clone(),
+            updated_at: now,
+            source: None,
+            tracks: Vec::new(),
+        };
+        self.save(&pl)?;
+        Ok(pl)
+    }
+
     pub fn load(&self, name: &str) -> Result<LocalPlaylist> {
         let path = self.path_for(name)?;
         if !path.exists() {
@@ -331,5 +350,16 @@ mod tests {
         let store = PlaylistStore::at(dir.path().to_path_buf());
         let err = store.delete("nope").unwrap_err();
         assert!(matches!(err, YtcliError::PlaylistNotFound(_)));
+    }
+
+    #[test]
+    fn create_empty_and_reject_duplicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PlaylistStore::at(dir.path().to_path_buf());
+        let pl = store.create_empty("chill").unwrap();
+        assert!(pl.tracks.is_empty());
+        assert_eq!(pl.name, "chill");
+        let err = store.create_empty("chill").unwrap_err();
+        assert!(matches!(err, YtcliError::PlaylistExists(_)));
     }
 }

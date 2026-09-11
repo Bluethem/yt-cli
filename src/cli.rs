@@ -62,14 +62,20 @@ pub enum Commands {
             value_parser = parse_search_limit
         )]
         limit: usize,
-        /// Guardar local: `--save` → liked (append); `--save NOMBRE` → replace
-        #[arg(long, num_args = 0..=1, value_name = "NOMBRE")]
+        /// Guardar local: `--save` → liked (append); `--save NOMBRE` → replace.
+        /// Compatible con `--play` (p. ej. `--save favorites --play`).
+        #[arg(long, num_args = 0..=1, value_name = "NOMBRE", allow_hyphen_values = false)]
         save: Option<Option<String>>,
     },
     /// Guarda la pista actual en una playlist local (default: liked)
     Save {
         /// Destino (default liked)
         name: Option<String>,
+    },
+    /// Crea una playlist local vacía
+    Create {
+        /// Nombre de la playlist
+        name: String,
     },
     /// Lista playlists locales guardadas
     Playlists,
@@ -246,6 +252,48 @@ mod tests {
         match cli.command {
             Commands::Playlist { save: Some(Some(n)), .. } => assert_eq!(n, "rock"),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_playlist_save_and_play_together() {
+        let cli = Cli::try_parse_from([
+            "ytcli",
+            "playlist",
+            "https://x",
+            "--save",
+            "favorites",
+            "--play",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Playlist {
+                save: Some(Some(name)),
+                play: true,
+                ..
+            } => assert_eq!(name, "favorites"),
+            other => panic!("{other:?}"),
+        }
+
+        // Bare --save must not swallow --play as the playlist name.
+        let cli = Cli::try_parse_from(["ytcli", "playlist", "https://x", "--save", "--play"])
+            .unwrap();
+        match cli.command {
+            Commands::Playlist {
+                save: Some(None),
+                play: true,
+                ..
+            } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_create() {
+        let cli = Cli::try_parse_from(["ytcli", "create", "chill"]).unwrap();
+        match cli.command {
+            Commands::Create { name } => assert_eq!(name, "chill"),
+            _ => panic!("expected Create"),
         }
     }
 
