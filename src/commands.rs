@@ -16,7 +16,16 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Prev { force } => cmd_prev(force),
         Commands::Clear => cmd_clear(),
         Commands::Shuffle => cmd_shuffle(),
-        Commands::Playlist { url, play, limit } => cmd_playlist(&url, play, limit),
+        Commands::Playlist {
+            url,
+            play,
+            limit,
+            save,
+        } => cmd_playlist(&url, play, limit, save),
+        Commands::Save { name } => cmd_save(name.as_deref()),
+        Commands::Playlists => cmd_playlists(),
+        Commands::Open { name, play } => cmd_open(&name, play),
+        Commands::PlaylistRm { name, yes } => cmd_playlist_rm(&name, yes),
         Commands::Loop => cmd_loop(true),
         Commands::Unloop => cmd_loop(false),
         Commands::Watch => cmd_watch(),
@@ -153,7 +162,31 @@ fn cmd_shuffle() -> Result<()> {
     Ok(())
 }
 
-fn cmd_playlist(url: &str, play: bool, limit: usize) -> Result<()> {
+// Task 4 replaces these stubs with real local-playlist implementations.
+fn cmd_save(name: Option<&str>) -> Result<()> {
+    println!("[stub] save name={name:?}");
+    Ok(())
+}
+
+fn cmd_playlists() -> Result<()> {
+    println!("[stub] playlists");
+    Ok(())
+}
+
+fn cmd_open(name: &str, play: bool) -> Result<()> {
+    println!("[stub] open name={name} play={play}");
+    Ok(())
+}
+
+fn cmd_playlist_rm(name: &str, yes: bool) -> Result<()> {
+    println!("[stub] playlist-rm name={name} yes={yes}");
+    Ok(())
+}
+
+fn cmd_playlist(url: &str, play: bool, limit: usize, save: Option<Option<String>>) -> Result<()> {
+    if save.is_some() {
+        println!("[stub] playlist --save {save:?}");
+    }
     let yt_dlp = YtDlp::default();
     yt_dlp.ensure_bin()?;
 

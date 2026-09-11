@@ -62,6 +62,33 @@ pub enum Commands {
             value_parser = parse_search_limit
         )]
         limit: usize,
+        /// Guardar local: `--save` → liked (append); `--save NOMBRE` → replace
+        #[arg(long, num_args = 0..=1, value_name = "NOMBRE")]
+        save: Option<Option<String>>,
+    },
+    /// Guarda la cola actual como playlist local
+    Save {
+        /// Destino (default liked)
+        name: Option<String>,
+    },
+    /// Lista playlists locales guardadas
+    Playlists,
+    /// Abre una playlist local en la cola
+    Open {
+        /// Nombre de la playlist
+        name: String,
+        /// Reemplaza la cola y reproduce desde el primero
+        #[arg(long)]
+        play: bool,
+    },
+    /// Elimina una playlist local
+    #[command(name = "playlist-rm")]
+    PlaylistRm {
+        /// Nombre de la playlist
+        name: String,
+        /// Confirmar eliminación
+        #[arg(long)]
+        yes: bool,
     },
     /// Repite la pista actual
     Loop,
@@ -174,12 +201,55 @@ mod tests {
         ])
         .unwrap();
         match cli.command {
-            Commands::Playlist { url, play, limit } => {
+            Commands::Playlist {
+                url,
+                play,
+                limit,
+                save,
+            } => {
                 assert!(url.contains("list=PLx"));
                 assert!(play);
                 assert_eq!(limit, 25);
+                assert!(save.is_none());
             }
             _ => panic!("expected Playlist"),
+        }
+    }
+
+    #[test]
+    fn parse_save_default_and_named() {
+        let cli = Cli::try_parse_from(["ytcli", "save"]).unwrap();
+        match cli.command {
+            Commands::Save { name: None } => {}
+            _ => panic!(),
+        }
+        let cli = Cli::try_parse_from(["ytcli", "save", "rock"]).unwrap();
+        match cli.command {
+            Commands::Save { name: Some(n) } => assert_eq!(n, "rock"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parse_playlist_save_optional_name() {
+        let cli = Cli::try_parse_from(["ytcli", "playlist", "https://x", "--save"]).unwrap();
+        match cli.command {
+            Commands::Playlist { save: Some(None), .. } => {}
+            other => panic!("{other:?}"),
+        }
+        let cli = Cli::try_parse_from(["ytcli", "playlist", "https://x", "--save", "rock"]).unwrap();
+        match cli.command {
+            Commands::Playlist { save: Some(Some(n)), .. } => assert_eq!(n, "rock"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_playlist_rm_requires_yes_flag_present_in_argv() {
+        let cli = Cli::try_parse_from(["ytcli", "playlist-rm", "rock", "--yes"]).unwrap();
+        match cli.command {
+            Commands::PlaylistRm { name, yes: true } => assert_eq!(name, "rock"),
+            _ => panic!(),
         }
     }
 
